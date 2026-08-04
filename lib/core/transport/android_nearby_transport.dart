@@ -84,8 +84,7 @@ class AndroidNearbyTransport implements ChatTransport {
           transportId: 'android-nearby',
           kind: TransportKind.localWifi,
           failure: TransportActivationFailure.permissionDenied,
-          message:
-              'Nearby devices and local-network permissions are required.',
+          message: 'Nearby devices and local-network permissions are required.',
         );
       case NearbyAuthorizationState.unsupported:
         throw const TransportActivationException(
@@ -217,8 +216,7 @@ class AndroidNearbyTransport implements ChatTransport {
     }
 
     _knownEndpoints[endpointId] = identity!;
-    final shouldInitiate =
-        _profile.deviceId.compareTo(identity.deviceId) < 0;
+    final shouldInitiate = _profile.deviceId.compareTo(identity.deviceId) < 0;
     if (!shouldInitiate ||
         _connectedEndpointIds.contains(endpointId) ||
         !_pendingEndpointIds.add(endpointId)) {
