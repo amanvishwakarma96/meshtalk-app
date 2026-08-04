@@ -45,6 +45,8 @@ class ChatSession extends ChangeNotifier {
   final Uuid _uuid;
   final List<StreamSubscription<Object?>> _subscriptions =
       <StreamSubscription<Object?>>[];
+  final Map<String, List<NearbyPeer>> _peersByTransportId =
+      <String, List<NearbyPeer>>{};
 
   ChatSessionState _state;
   bool _initialized = false;
@@ -76,10 +78,25 @@ class ChatSession extends ChangeNotifier {
       ),
     );
 
+    _subscriptions.add(
+      _radio.availabilityChanges.listen((_) {
+        unawaited(_refreshTransport());
+      }),
+    );
+    for (final transport in _transportManager.transports) {
+      _peersByTransportId[transport.id] = const <NearbyPeer>[];
+      _subscriptions
+        ..add(
+          transport.nearbyPeers.listen(
+            (peers) => _handlePeersChanged(transport, peers),
+          ),
+        )
+        ..add(transport.incomingMessages.listen(_handleIncomingMessage));
+    }
     _subscriptions
-      ..add(_radio.availabilityChanges.listen(_handleAvailabilityChanged))
-      ..add(_bleTransport.nearbyPeers.listen(_handlePeersChanged))
-      ..add(_bleTransport.incomingMessages.listen(_handleIncomingMessage))
+      ..add(
+        _transportManager.changes.listen(_handleActiveTransportChanged),
+      )
       ..add(_transportManager.sentMessages.listen(_handleTransportSent));
 
     await _refreshTransport(requestAuthorization: true);
@@ -87,7 +104,7 @@ class ChatSession extends ChangeNotifier {
       pendingOutbound.map((stored) => stored.envelope),
     );
     _syncPendingCount();
-    if (_state.peers.isNotEmpty && _transportManager.pendingCount > 0) {
+    if (_activePeers.isNotEmpty && _transportManager.pendingCount > 0) {
       await _flushQueuedMessages();
     }
   }
@@ -133,8 +150,8 @@ class ChatSession extends ChangeNotifier {
     try {
       await _transportManager.send(envelope);
     } catch (_) {
-      // The transport manager keeps failed sends in its in-memory queue while
-      // SQLite remains the process-restart source of truth.
+      // TransportManager keeps failed sends in memory while SQLite remains
+      // the process-restart source of truth.
     }
     _syncPendingCount();
   }
@@ -154,29 +171,30 @@ class ChatSession extends ChangeNotifier {
     super.dispose();
   }
 
-  void _handleAvailabilityChanged(BleRadioAvailability availability) {
-    unawaited(_refreshTransport());
-  }
+  void _handlePeersChanged(
+    ChatTransport source,
+    List<NearbyPeer> peers,
+  ) {
+    final normalized = List<NearbyPeer>.unmodifiable(peers);
+    _peersByTransportId[source.id] = normalized;
+    if (!identical(source, _transportManager.active)) {
+      return;
+    }
 
-  void _handlePeersChanged(List<NearbyPeer> peers) {
-    final status = peers.isEmpty
-        ? ChatConnectionStatus.scanning
-        : ChatConnectionStatus.connected;
-    final message = peers.isEmpty
-        ? _scanningMessage(_transportManager.pendingCount)
-        : 'Connected to ${peers.length} nearby peer${peers.length == 1 ? '' : 's'} over BLE.';
-    _replaceState(
-      _state.copyWith(
-        status: status,
-        statusMessage: message,
-        peers: List<NearbyPeer>.unmodifiable(peers),
-        pendingCount: _transportManager.pendingCount,
-      ),
-    );
-
-    if (peers.isNotEmpty && _transportManager.pendingCount > 0) {
+    _applyActiveTransportState(source, normalized);
+    if (normalized.isNotEmpty && _transportManager.pendingCount > 0) {
       unawaited(_flushQueuedMessages());
     }
+  }
+
+  void _handleActiveTransportChanged(ChatTransport? active) {
+    if (active == null) {
+      return;
+    }
+    _applyActiveTransportState(
+      active,
+      _peersByTransportId[active.id] ?? const <NearbyPeer>[],
+    );
   }
 
   void _handleIncomingMessage(MessageEnvelope envelope) {
@@ -224,7 +242,7 @@ class ChatSession extends ChangeNotifier {
     try {
       await _transportManager.send(envelope);
     } catch (_) {
-      // Relay failures remain queued by TransportManager for the next peer.
+      // Relay failures remain queued for the next active peer or transport.
     }
     _syncPendingCount();
   }
@@ -249,43 +267,55 @@ class ChatSession extends ChangeNotifier {
         try {
           await _bleTransport.connect();
         } catch (_) {
-          // The resulting radio state is mapped below.
+          // TransportManager will continue to the Android fallback when the
+          // BLE path remains unavailable.
         }
-      }
-
-      final availability = _radio.availability;
-      if (availability != BleRadioAvailability.ready) {
-        await _transportManager.refresh();
-        _applyUnavailableState(availability);
-        return;
       }
 
       final active = await _transportManager.refresh();
       if (active == null) {
-        _replaceState(
-          _state.copyWith(
-            status: ChatConnectionStatus.error,
-            statusMessage:
-                'BLE is available, but the transport could not start.',
-          ),
-        );
+        _applyNoTransportState(_radio.availability);
         return;
       }
 
-      final peers = _state.peers;
-      _replaceState(
-        _state.copyWith(
-          status: peers.isEmpty
-              ? ChatConnectionStatus.scanning
-              : ChatConnectionStatus.connected,
-          statusMessage: peers.isEmpty
-              ? _scanningMessage(_transportManager.pendingCount)
-              : 'Connected to ${peers.length} nearby peer${peers.length == 1 ? '' : 's'} over BLE.',
-          pendingCount: _transportManager.pendingCount,
-        ),
+      _applyActiveTransportState(
+        active,
+        _peersByTransportId[active.id] ?? const <NearbyPeer>[],
       );
+    } on TransportActivationException catch (error) {
+      if (error.kind == TransportKind.localWifi &&
+          error.failure == TransportActivationFailure.permissionDenied) {
+        _replaceState(
+          _state.copyWith(
+            status: ChatConnectionStatus.localNetworkPermissionDenied,
+            statusMessage:
+                'Nearby devices permission is required for the Android fallback.',
+            peers: const <NearbyPeer>[],
+            pendingCount: _transportManager.pendingCount,
+            clearActiveTransport: true,
+          ),
+        );
+      } else {
+        _replaceState(
+          _state.copyWith(
+            status: ChatConnectionStatus.error,
+            statusMessage: error.message,
+            peers: const <NearbyPeer>[],
+            pendingCount: _transportManager.pendingCount,
+            clearActiveTransport: true,
+          ),
+        );
+      }
     } catch (_) {
-      _applyUnavailableState(_radio.availability);
+      final active = _transportManager.active;
+      if (active != null) {
+        _applyActiveTransportState(
+          active,
+          _peersByTransportId[active.id] ?? const <NearbyPeer>[],
+        );
+      } else {
+        _applyNoTransportState(_radio.availability);
+      }
     } finally {
       _refreshing = false;
     }
@@ -300,23 +330,45 @@ class ChatSession extends ChangeNotifier {
     _syncPendingCount();
   }
 
-  void _applyUnavailableState(BleRadioAvailability availability) {
+  void _applyActiveTransportState(
+    ChatTransport transport,
+    List<NearbyPeer> peers,
+  ) {
+    final connected = peers.isNotEmpty;
+    final status = connected
+        ? ChatConnectionStatus.connected
+        : ChatConnectionStatus.scanning;
+    final statusMessage = connected
+        ? _connectedMessage(transport, peers.length)
+        : _searchingMessage(transport, _transportManager.pendingCount);
+    _replaceState(
+      _state.copyWith(
+        status: status,
+        statusMessage: statusMessage,
+        peers: List<NearbyPeer>.unmodifiable(peers),
+        pendingCount: _transportManager.pendingCount,
+        activeTransportKind: transport.kind,
+      ),
+    );
+  }
+
+  void _applyNoTransportState(BleRadioAvailability availability) {
     final (status, message) = switch (availability) {
       BleRadioAvailability.unsupported => (
           ChatConnectionStatus.unsupported,
-          'This device does not support the required Bluetooth LE roles.',
+          'Required BLE roles are unsupported and no local fallback is active.',
         ),
       BleRadioAvailability.unauthorized => (
           ChatConnectionStatus.permissionDenied,
-          'Bluetooth permission is required for nearby mesh chat.',
+          'Bluetooth permission is required and no local fallback is active.',
         ),
       BleRadioAvailability.poweredOff => (
           ChatConnectionStatus.bluetoothOff,
-          'Turn on Bluetooth, then retry nearby chat.',
+          'Bluetooth is off and no Android Nearby fallback is active.',
         ),
       BleRadioAvailability.ready => (
           ChatConnectionStatus.error,
-          'Unable to start nearby chat. Try again.',
+          'No nearby transport could start. Try again.',
         ),
     };
     _replaceState(
@@ -325,6 +377,7 @@ class ChatSession extends ChangeNotifier {
         statusMessage: message,
         peers: const <NearbyPeer>[],
         pendingCount: _transportManager.pendingCount,
+        clearActiveTransport: true,
       ),
     );
   }
@@ -342,8 +395,10 @@ class ChatSession extends ChangeNotifier {
 
   void _syncPendingCount() {
     final pendingCount = _transportManager.pendingCount;
-    final statusMessage = _state.status == ChatConnectionStatus.scanning
-        ? _scanningMessage(pendingCount)
+    final active = _transportManager.active;
+    final statusMessage = _state.status == ChatConnectionStatus.scanning &&
+            active != null
+        ? _searchingMessage(active, pendingCount)
         : _state.statusMessage;
     _replaceState(
       _state.copyWith(
@@ -351,6 +406,39 @@ class ChatSession extends ChangeNotifier {
         statusMessage: statusMessage,
       ),
     );
+  }
+
+  List<NearbyPeer> get _activePeers {
+    final active = _transportManager.active;
+    if (active == null) {
+      return const <NearbyPeer>[];
+    }
+    return _peersByTransportId[active.id] ?? const <NearbyPeer>[];
+  }
+
+  String _searchingMessage(ChatTransport transport, int pendingCount) {
+    final suffix = pendingCount == 0
+        ? ''
+        : ' $pendingCount message${pendingCount == 1 ? '' : 's'} queued.';
+    return switch (transport.kind) {
+      TransportKind.bleMesh =>
+        'Searching for nearby MeshTalk peers over BLE…$suffix',
+      TransportKind.localWifi =>
+        'BLE unavailable. Searching with Android Nearby Connections…$suffix',
+      TransportKind.internetRelay =>
+        'Searching for an internet relay…$suffix',
+    };
+  }
+
+  String _connectedMessage(ChatTransport transport, int peerCount) {
+    final peerLabel = '$peerCount nearby peer${peerCount == 1 ? '' : 's'}';
+    return switch (transport.kind) {
+      TransportKind.bleMesh => 'Connected to $peerLabel over BLE.',
+      TransportKind.localWifi =>
+        'Connected to $peerLabel using the unverified Android Nearby fallback.',
+      TransportKind.internetRelay =>
+        'Connected to $peerLabel through an internet relay.',
+    };
   }
 
   ChatTimelineMessage _toTimelineMessage(StoredChatMessage stored) {
@@ -369,13 +457,6 @@ class ChatSession extends ChangeNotifier {
         StoredDeliveryStatus.received => ChatDeliveryStatus.received,
       },
     );
-  }
-
-  String _scanningMessage(int pendingCount) {
-    if (pendingCount == 0) {
-      return 'Searching for nearby MeshTalk peers…';
-    }
-    return 'Searching for peers… $pendingCount message${pendingCount == 1 ? '' : 's'} queued.';
   }
 
   void _replaceState(ChatSessionState nextState) {
