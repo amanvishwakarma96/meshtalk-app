@@ -65,7 +65,7 @@ The identity is stored locally with `shared_preferences`. No account, server, ph
 
 ## Getting started
 
-1. Install a current stable Flutter SDK with Dart 3.9 or newer.
+1. Install a current stable Flutter SDK with Dart 3.6 or newer.
 2. Clone the repository.
 3. Generate native project folders if they are not present:
 
@@ -130,7 +130,7 @@ The generated APK currently uses the default Flutter development signing configu
 ## Dependency notes
 
 - `bluetooth_low_energy` 6.2.1 is used because MeshTalk requires both BLE central and peripheral roles on Android and iOS. `flutter_blue_plus` was removed because it supports the central role only and therefore cannot provide phone-to-phone GATT advertising by itself.
-- `shared_preferences` 2.5.5 stores non-sensitive profile preferences. It is not used for message history or security-critical data.
+- `shared_preferences` 2.5.3 stores non-sensitive profile preferences while retaining the project’s Dart 3.6 compatibility. It is not used for message history or security-critical data.
 - `nearby_connections` 4.3.0 exposes Android Nearby Connections, not iOS Multipeer Connectivity. MeshTalk must use a separate iOS platform-channel adapter for equivalent local-network fallback rather than claiming cross-platform behavior from this package.
 - Permissions are limited to Bluetooth scan/connect/advertise, foreground location where required for legacy discovery, local-network access, and notifications. Camera, contacts, SMS, file storage, and background/always location are prohibited without maintainer approval.
 
