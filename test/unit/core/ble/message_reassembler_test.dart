@@ -11,7 +11,8 @@ void main() {
     test('reassembles out-of-order chunks and ignores duplicates', () {
       final envelope = _message('mesh payload ' * 40);
       const chunker = MessageChunker();
-      final chunks = chunker.chunk(envelope, negotiatedMtu: 72).reversed.toList();
+      final chunks =
+          chunker.chunk(envelope, negotiatedMtu: 72).reversed.toList();
       final reassembler = MessageReassembler();
 
       expect(reassembler.add(chunks.first), isNull);

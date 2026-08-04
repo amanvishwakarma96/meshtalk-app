@@ -11,7 +11,8 @@ import 'package:meshtalk_app/core/ble/message_reassembler.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('mocked peer receives, reassembles, and relays a message', (_) async {
+  testWidgets('mocked peer receives, reassembles, and relays a message',
+      (_) async {
     final outbound = MessageEnvelope(
       id: 'exchange-1',
       senderId: 'peer-a',

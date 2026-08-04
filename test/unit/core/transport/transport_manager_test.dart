@@ -33,7 +33,8 @@ void main() {
       when(ble.isAvailable).thenAnswer((_) async => false);
       when(wifi.isAvailable).thenAnswer((_) async => true);
       when(relay.isAvailable).thenAnswer((_) async => true);
-      final manager = TransportManager(transports: <ChatTransport>[ble, wifi, relay]);
+      final manager =
+          TransportManager(transports: <ChatTransport>[ble, wifi, relay]);
 
       final selected = await manager.refresh();
 
@@ -43,7 +44,8 @@ void main() {
       await manager.dispose();
     });
 
-    test('queues with no transport and flushes after fallback connects', () async {
+    test('queues with no transport and flushes after fallback connects',
+        () async {
       when(ble.isAvailable).thenAnswer((_) async => false);
       when(wifi.isAvailable).thenAnswer((_) async => true);
       final manager = TransportManager(transports: <ChatTransport>[ble, wifi]);
@@ -58,7 +60,8 @@ void main() {
       await manager.dispose();
     });
 
-    test('upgrades from Wi-Fi to BLE and disconnects previous transport', () async {
+    test('upgrades from Wi-Fi to BLE and disconnects previous transport',
+        () async {
       var bleAvailable = false;
       when(ble.isAvailable).thenAnswer((_) async => bleAvailable);
       when(wifi.isAvailable).thenAnswer((_) async => true);

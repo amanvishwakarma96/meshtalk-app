@@ -55,7 +55,8 @@ class MessageReassembler {
     _assemblies.remove(chunk.messageId);
     final envelope = codec.decode(builder.takeBytes());
     if (envelope.id != chunk.messageId) {
-      throw const FormatException('Chunk message ID does not match envelope ID.');
+      throw const FormatException(
+          'Chunk message ID does not match envelope ID.');
     }
     return envelope;
   }
