@@ -33,7 +33,9 @@ void main() {
     expect(codec.decode('not-meshtalk'), isNull);
     expect(codec.decode('MT1|short|Peer'), isNull);
     expect(
-        codec.decode('MT2|550e8400-e29b-41d4-a716-446655440000|Peer'), isNull);
+      codec.decode('MT2|550e8400-e29b-41d4-a716-446655440000|Peer'),
+      isNull,
+    );
   });
 
   test('rejects invalid local device identifiers', () {
