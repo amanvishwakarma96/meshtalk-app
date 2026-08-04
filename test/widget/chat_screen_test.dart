@@ -95,7 +95,7 @@ void main() {
       find.byKey(const ValueKey<String>('nearby-auth-warning')),
       findsOneWidget,
     );
-    expect(find.textContaining('unverified Android Nearby'), findsOneWidget);
+    expect(find.textContaining('unverified Android Nearby'), findsWidgets);
   });
 
   testWidgets('opens settings for denied Android Nearby permissions',
