@@ -32,6 +32,9 @@ class TransportManager {
     }
 
     if (identical(candidate, _active)) {
+      if (_active != null) {
+        await _flushPending();
+      }
       return _active;
     }
 

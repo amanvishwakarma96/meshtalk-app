@@ -4,7 +4,7 @@ MeshTalk is an offline-first mobile chat application for nearby users. Its prima
 
 ## Status
 
-Phase 1 foundation is under active development. The repository contains the Flutter application skeleton, transport contracts, mesh protocol primitives, a dual-role BLE radio adapter, tests, CI, and release documentation. Chat presentation is not yet wired to the physical radio adapter.
+Phase 1 is under active development. The app now creates a persistent local device identity, starts the dual-role BLE transport, shows live permission/radio/peer state, queues messages while searching, and delivers or relays received envelopes through the mesh protocol. Local message-history persistence and fallback transports are still pending.
 
 ## Transport priority
 
@@ -17,7 +17,7 @@ The chat feature does not depend directly on a BLE plugin. `TransportManager` ch
 
 ## Security notice
 
-MeshTalk is **not end-to-end encrypted yet**. BLE pairing/bonding may protect an individual radio link, but relayed message payloads remain readable at the application layer by intermediate peers. Do not use the current build for sensitive communications. This warning must remain visible until message-level encryption ships.
+MeshTalk is **not end-to-end encrypted yet**. BLE pairing/bonding may protect an individual radio link, but relayed message payloads remain readable at the application layer by intermediate peers. Do not use the current build for sensitive communications. This warning remains visible in the chat UI until message-level encryption ships.
 
 ## Architecture
 
@@ -25,20 +25,20 @@ MeshTalk is **not end-to-end encrypted yet**. BLE pairing/bonding may protect an
 lib/
   core/
     ble/                 # dual-role radio, frame codec, relay and reassembly
+    profile/             # persistent local identity
     permissions/         # centralized runtime permission policy
-    storage/             # local persistence adapters
+    storage/             # local message persistence adapters (next milestone)
     transport/           # ChatTransport, BLE transport and TransportManager
   features/
     chat/
+      data/              # runtime ChatSession
+      domain/            # immutable UI/session models
+      presentation/      # Riverpod page and testable widgets
     diagnostics/
     ble_console/
   app.dart
+  app_providers.dart
   main.dart
-test/
-  unit/
-  widget/
-  integration/
-integration_test/
 ```
 
 `BluetoothLowEnergyMeshRadio` simultaneously:
@@ -51,6 +51,17 @@ integration_test/
 - reports connected peers and negotiated frame limits.
 
 `BleTransport` remains plugin-independent. It converts message envelopes into compact BLE frames, sends them through `BleMeshRadio`, and reassembles inbound frames.
+
+`ChatSession` owns runtime orchestration. It starts BLE authorization through the radio adapter, maps permission/off/unsupported states into actionable UI, sends transport-agnostic envelopes, marks local IDs as seen, applies relay TTL/dedup decisions, and retries queued messages when a peer appears.
+
+## Local profile
+
+On first launch, MeshTalk generates and persists:
+
+- a UUID device ID;
+- a short display name derived from that ID.
+
+The identity is stored locally with `shared_preferences`. No account, server, phone number, contacts access, or cloud profile is required. Display-name editing will be added with the local-history/settings milestone.
 
 ## Getting started
 
@@ -82,6 +93,17 @@ integration_test/
 
 6. Run the app on physical Android and iOS devices. BLE central/peripheral behavior cannot be validated reliably on simulators.
 
+## Runtime states
+
+The chat screen distinguishes these states instead of showing a generic failure:
+
+- Bluetooth permission denied — opens app settings;
+- Bluetooth off — asks the user to enable Bluetooth and retry;
+- required BLE roles unsupported — explains the hardware limitation;
+- scanning — messages can be queued while MeshTalk searches for peers;
+- connected — shows the live nearby-peer count;
+- initialization/transport error — offers a retry action.
+
 ## Android BLE configuration
 
 `tool/configure_android_project.sh` makes the generated Android project compatible with the BLE adapter:
@@ -90,8 +112,6 @@ integration_test/
 - declares `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT`, and `BLUETOOTH_ADVERTISE`;
 - keeps legacy Bluetooth and foreground location permissions limited to Android 11 and older;
 - does not request background or always-on location.
-
-Runtime permission handling still belongs in `core/permissions/` and must be completed before BLE is exposed in the production UI.
 
 ## Android APK artifacts
 
@@ -110,15 +130,17 @@ The generated APK currently uses the default Flutter development signing configu
 ## Dependency notes
 
 - `bluetooth_low_energy` 6.2.1 is used because MeshTalk requires both BLE central and peripheral roles on Android and iOS. `flutter_blue_plus` was removed because it supports the central role only and therefore cannot provide phone-to-phone GATT advertising by itself.
-- `bluetooth_low_energy` is MIT-licensed and requires Android API 24 or newer.
+- `shared_preferences` 2.5.3 stores non-sensitive profile preferences while retaining the project’s Dart 3.6 compatibility. It is not used for message history or security-critical data.
 - `nearby_connections` 4.3.0 exposes Android Nearby Connections, not iOS Multipeer Connectivity. MeshTalk must use a separate iOS platform-channel adapter for equivalent local-network fallback rather than claiming cross-platform behavior from this package.
 - Permissions are limited to Bluetooth scan/connect/advertise, foreground location where required for legacy discovery, local-network access, and notifications. Camera, contacts, SMS, file storage, and background/always location are prohibited without maintainer approval.
 
-## Known BLE limitations
+## Known limitations
 
-- This adapter is foreground-first. Background advertising, restoration, and long-lived background connections require platform-specific lifecycle work and real-device validation.
-- Symmetric phone-to-phone discovery may create more than one logical path between two devices. Higher-level message IDs and deduplication remain authoritative.
+- Message history currently lives only in memory and is lost when the app process exits.
+- The BLE adapter is foreground-first. Background advertising, restoration, and long-lived background connections require platform-specific lifecycle work and real-device validation.
+- Symmetric phone-to-phone discovery may create more than one logical path between two devices. Message IDs and deduplication remain authoritative.
 - The compact BLE frame format supports at most 255 chunks per message.
+- Local Wi-Fi and internet fallback transports are not implemented yet.
 - Real-device verification on at least two phones is required before this transport is considered release-ready.
 
 ## Development process

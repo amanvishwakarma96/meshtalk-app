@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:meshtalk_app/features/chat/presentation/chat_screen.dart';
+import 'package:meshtalk_app/features/chat/presentation/chat_page.dart';
 
 class MeshTalkApp extends StatelessWidget {
   const MeshTalkApp({super.key});
@@ -13,7 +13,7 @@ class MeshTalkApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
         useMaterial3: true,
       ),
-      home: const ChatScreen(),
+      home: const ChatPage(),
     );
   }
 }

@@ -60,6 +60,30 @@ void main() {
       await manager.dispose();
     });
 
+    test('flushes queued messages when the current transport recovers',
+        () async {
+      when(ble.isAvailable).thenAnswer((_) async => true);
+      var firstSend = true;
+      when(() => ble.send(any())).thenAnswer((_) async {
+        if (firstSend) {
+          firstSend = false;
+          throw StateError('No peer yet');
+        }
+      });
+      final manager = TransportManager(transports: <ChatTransport>[ble]);
+      final message = _message('peer-wait');
+      await manager.refresh();
+
+      await expectLater(manager.send(message), throwsStateError);
+      expect(manager.pendingCount, 1);
+      await manager.refresh();
+
+      verify(() => ble.send(message)).called(2);
+      expect(manager.pendingCount, 0);
+      verify(ble.connect).called(1);
+      await manager.dispose();
+    });
+
     test('upgrades from Wi-Fi to BLE and disconnects previous transport',
         () async {
       var bleAvailable = false;

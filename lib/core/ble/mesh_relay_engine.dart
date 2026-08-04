@@ -26,6 +26,10 @@ class MeshRelayEngine {
 
   final SeenMessageCache _seenMessages;
 
+  void markOriginated(String messageId) {
+    _seenMessages.markSeen(messageId);
+  }
+
   RelayDecision processIncoming(MessageEnvelope envelope) {
     if (!_seenMessages.markSeen(envelope.id)) {
       return const RelayDecision(

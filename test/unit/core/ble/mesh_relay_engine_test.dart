@@ -30,6 +30,18 @@ void main() {
       expect(duplicate.relayEnvelope, isNull);
     });
 
+    test('does not deliver an echoed locally originated message', () {
+      final engine = MeshRelayEngine();
+      engine.markOriginated('local-message');
+
+      final echoed = engine.processIncoming(
+        _message(id: 'local-message', hopLimit: 3),
+      );
+
+      expect(echoed.disposition, RelayDisposition.duplicate);
+      expect(echoed.deliverLocally, isFalse);
+    });
+
     test('drops a message whose hop limit is zero', () {
       final decision = MeshRelayEngine().processIncoming(
         _message(id: 'expired', hopLimit: 0),
