@@ -44,7 +44,8 @@ void main() {
       await manager.dispose();
     });
 
-    test('continues to fallback when a higher-priority transport fails to start',
+    test(
+        'continues to fallback when a higher-priority transport fails to start',
         () async {
       when(ble.isAvailable).thenAnswer((_) async => true);
       when(ble.connect).thenAnswer((_) async {
