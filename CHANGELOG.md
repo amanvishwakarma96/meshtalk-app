@@ -16,10 +16,17 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Android release APK workflow with downloadable artifact and SHA-256 checksum.
 - Dual-role BLE radio adapter for advertising, scanning, GATT writes, notifications, peer tracking, and MTU-aware frame delivery.
 - Compact binary BLE chunk frame codec and transport-level unit tests.
+- Persistent local device identity and generated display name with no account requirement.
+- Runtime chat session wiring for BLE authorization, live peer state, queued sends, relay decisions, and actionable recovery UI.
 
 ### Changed
 
 - Replaced the central-only `flutter_blue_plus` dependency with MIT-licensed `bluetooth_low_energy`, which supports both central and peripheral roles.
 - Android project configuration now enforces API 24 and declares scan, connect, advertise, and legacy discovery permissions.
+- The app now launches the live session-backed chat page instead of the static chat shell.
+- The minimum Dart SDK is now 3.9 because the current `shared_preferences` API requires it.
 
 ### Fixed
+
+- Queued messages now retry when the currently selected transport gains a peer, without requiring a transport switch.
+- Locally originated message IDs are marked as seen so radio echoes are not shown or relayed again.
