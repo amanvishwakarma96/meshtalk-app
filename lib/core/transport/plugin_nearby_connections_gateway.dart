@@ -145,6 +145,11 @@ class PluginNearbyConnectionsGateway implements NearbyConnectionsGateway {
   }
 
   @override
+  Future<bool> rejectConnection(String endpointId) {
+    return _nearby.rejectConnection(endpointId);
+  }
+
+  @override
   Future<void> sendBytes(String endpointId, Uint8List bytes) {
     return _nearby.sendBytesPayload(endpointId, bytes);
   }
