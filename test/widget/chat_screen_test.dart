@@ -29,6 +29,7 @@ void main() {
           },
           onRetry: () async {},
           onOpenSettings: () async {},
+          onUpdateDisplayName: (_) async {},
         ),
       ),
     );
@@ -57,6 +58,7 @@ void main() {
           onOpenSettings: () async {
             openedSettings = true;
           },
+          onUpdateDisplayName: (_) async {},
         ),
       ),
     );
@@ -72,6 +74,37 @@ void main() {
     await tester.pump();
 
     expect(openedSettings, isTrue);
+  });
+
+  testWidgets('validates and saves an edited local display name',
+      (tester) async {
+    String? updatedName;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          state: _state(status: ChatConnectionStatus.connected),
+          onSend: (_) async {},
+          onRetry: () async {},
+          onOpenSettings: () async {},
+          onUpdateDisplayName: (displayName) async {
+            updatedName = displayName;
+          },
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey<String>('profile-button')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('display-name-input')),
+      'Aman Phone',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('save-profile-button')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(updatedName, 'Aman Phone');
   });
 }
 
