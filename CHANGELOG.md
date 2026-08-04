@@ -24,7 +24,6 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Replaced the central-only `flutter_blue_plus` dependency with MIT-licensed `bluetooth_low_energy`, which supports both central and peripheral roles.
 - Android project configuration now enforces API 24 and declares scan, connect, advertise, and legacy discovery permissions.
 - The app now launches the live session-backed chat page instead of the static chat shell.
-- The minimum Dart SDK is now 3.9 because the current `shared_preferences` API requires it.
 
 ### Fixed
 
