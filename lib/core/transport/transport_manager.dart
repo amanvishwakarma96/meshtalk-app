@@ -79,10 +79,10 @@ class TransportManager {
 
     _active = candidate;
     _changes.add(candidate);
-    await _flushPending();
     if (previous != null) {
       await previous.disconnect();
     }
+    await _flushPending();
     return candidate;
   }
 
