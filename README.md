@@ -37,6 +37,7 @@ lib/
 test/
   unit/
   widget/
+  integration/
 integration_test/
 ```
 
@@ -63,8 +64,8 @@ integration_test/
 ## Dependency notes
 
 - `flutter_blue_plus` is the intended BLE adapter dependency. Review its current distribution/licensing terms before publishing binaries.
-- `nearby_connections` is retained for Android local-nearby evaluation. iOS Multipeer Connectivity support must be verified independently; use a platform-channel adapter if the plugin does not provide equivalent iOS behavior.
-- Permissions are limited to Bluetooth scan/connect, foreground location where required for discovery, local-network access, and notifications. Camera, contacts, SMS, and background/always location are prohibited without maintainer approval.
+- `nearby_connections` 4.3.0 exposes Android Nearby Connections, not iOS Multipeer Connectivity. MeshTalk must use a separate iOS platform-channel adapter for equivalent local-network fallback rather than claiming cross-platform behavior from this package.
+- Permissions are limited to Bluetooth scan/connect, foreground location where required for discovery, local-network access, and notifications. Camera, contacts, SMS, file storage, and background/always location are prohibited without maintainer approval.
 
 ## Development process
 

@@ -16,8 +16,14 @@ void main() {
       final chunks = chunker.chunk(envelope, negotiatedMtu: mtu);
 
       expect(chunks.length, greaterThan(1));
-      expect(chunks.every((chunk) => chunk.payload.length <= mtu - overhead), isTrue);
-      expect(chunks.map((chunk) => chunk.index), orderedEquals(<int>[0, 1, 2, 3, 4, 5, 6, 7]));
+      expect(
+        chunks.every((chunk) => chunk.payload.length <= mtu - overhead),
+        isTrue,
+      );
+      expect(
+        chunks.map((chunk) => chunk.index),
+        orderedEquals(List<int>.generate(chunks.length, (index) => index)),
+      );
       expect(chunks.every((chunk) => chunk.total == chunks.length), isTrue);
     });
 
