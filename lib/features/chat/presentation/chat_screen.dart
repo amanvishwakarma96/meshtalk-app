@@ -179,9 +179,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
                 validator: (value) {
                   final normalized = value?.trim().replaceAll(
-                        RegExp(r'\s+'),
-                        ' ',
-                      ) ??
+                            RegExp(r'\s+'),
+                            ' ',
+                          ) ??
                       '';
                   if (normalized.length < 2) {
                     return 'Enter at least 2 characters.';
