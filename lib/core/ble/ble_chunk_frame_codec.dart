@@ -16,7 +16,9 @@ class BleChunkFrameCodec {
       );
     }
     if (chunk.index < 0 || chunk.index >= chunk.total) {
-      throw const FormatException('BLE chunk index is outside the valid range.');
+      throw const FormatException(
+        'BLE chunk index is outside the valid range.',
+      );
     }
 
     final uuidBytes = _uuidToBytes(chunk.messageId);
@@ -25,7 +27,11 @@ class BleChunkFrameCodec {
       ..setRange(1, 17, uuidBytes)
       ..[17] = chunk.index
       ..[18] = chunk.total
-      ..setRange(headerBytes, headerBytes + chunk.payload.length, chunk.payload);
+      ..setRange(
+        headerBytes,
+        headerBytes + chunk.payload.length,
+        chunk.payload,
+      );
     return frame;
   }
 
@@ -74,9 +80,8 @@ class BleChunkFrameCodec {
       throw const FormatException('A UUID must contain exactly 16 bytes.');
     }
 
-    final hex = bytes
-        .map((value) => value.toRadixString(16).padLeft(2, '0'))
-        .join();
+    final hex =
+        bytes.map((value) => value.toRadixString(16).padLeft(2, '0')).join();
     return '${hex.substring(0, 8)}-'
         '${hex.substring(8, 12)}-'
         '${hex.substring(12, 16)}-'
