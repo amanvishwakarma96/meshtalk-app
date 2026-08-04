@@ -4,6 +4,7 @@ import 'package:meshtalk_app/core/transport/chat_transport.dart';
 enum ChatConnectionStatus {
   initializing,
   permissionDenied,
+  localNetworkPermissionDenied,
   bluetoothOff,
   unsupported,
   scanning,
@@ -61,6 +62,7 @@ class ChatSessionState {
     required this.messages,
     required this.peers,
     required this.pendingCount,
+    this.activeTransportKind,
   });
 
   factory ChatSessionState.initial(LocalProfile profile) {
@@ -80,12 +82,15 @@ class ChatSessionState {
   final List<ChatTimelineMessage> messages;
   final List<NearbyPeer> peers;
   final int pendingCount;
+  final TransportKind? activeTransportKind;
 
   bool get canSend =>
       status == ChatConnectionStatus.scanning ||
       status == ChatConnectionStatus.connected;
 
-  bool get canOpenSettings => status == ChatConnectionStatus.permissionDenied;
+  bool get canOpenSettings =>
+      status == ChatConnectionStatus.permissionDenied ||
+      status == ChatConnectionStatus.localNetworkPermissionDenied;
 
   bool get canRetry =>
       status == ChatConnectionStatus.bluetoothOff ||
@@ -98,6 +103,8 @@ class ChatSessionState {
     List<ChatTimelineMessage>? messages,
     List<NearbyPeer>? peers,
     int? pendingCount,
+    TransportKind? activeTransportKind,
+    bool clearActiveTransport = false,
   }) {
     return ChatSessionState(
       profile: profile ?? this.profile,
@@ -106,6 +113,9 @@ class ChatSessionState {
       messages: messages ?? this.messages,
       peers: peers ?? this.peers,
       pendingCount: pendingCount ?? this.pendingCount,
+      activeTransportKind: clearActiveTransport
+          ? null
+          : activeTransportKind ?? this.activeTransportKind,
     );
   }
 }
