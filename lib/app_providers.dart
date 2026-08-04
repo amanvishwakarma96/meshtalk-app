@@ -5,6 +5,8 @@ import 'package:meshtalk_app/core/ble/ble_mesh_radio.dart';
 import 'package:meshtalk_app/core/ble/bluetooth_low_energy_mesh_radio.dart';
 import 'package:meshtalk_app/core/profile/local_profile.dart';
 import 'package:meshtalk_app/core/profile/profile_store.dart';
+import 'package:meshtalk_app/core/storage/message_store.dart';
+import 'package:meshtalk_app/core/storage/sqlite_message_store.dart';
 import 'package:meshtalk_app/core/transport/ble_transport.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
 import 'package:meshtalk_app/core/transport/transport_manager.dart';
@@ -19,6 +21,14 @@ final profileStoreProvider = Provider<ProfileStore>((ref) {
 
 final localProfileProvider = FutureProvider<LocalProfile>((ref) async {
   return ref.watch(profileStoreProvider).loadOrCreate();
+});
+
+final messageStoreProvider = Provider<MessageStore>((ref) {
+  final store = SqliteMessageStore();
+  ref.onDispose(() {
+    unawaited(store.close());
+  });
+  return store;
 });
 
 typedef BleRadioFactory = BleMeshRadio Function(LocalProfile profile);
@@ -43,6 +53,7 @@ final chatSessionProvider = FutureProvider<ChatSession>((ref) async {
     radio: radio,
     bleTransport: bleTransport,
     transportManager: transportManager,
+    messageStore: ref.watch(messageStoreProvider),
     openAppSettings: () async {
       await openAppSettings();
     },
