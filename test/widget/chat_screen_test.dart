@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meshtalk_app/core/profile/local_profile.dart';
+import 'package:meshtalk_app/core/transport/chat_transport.dart';
 import 'package:meshtalk_app/features/chat/domain/chat_session_state.dart';
 import 'package:meshtalk_app/features/chat/presentation/chat_screen.dart';
 
@@ -89,8 +90,10 @@ ChatSessionState _state({
         : 'Bluetooth permission is required for nearby mesh chat.',
     messages: messages,
     peers: status == ChatConnectionStatus.connected
-        ? const <dynamic>[]
-        : const <dynamic>[],
+        ? const <NearbyPeer>[
+            NearbyPeer(id: 'peer-a', displayName: 'Peer A'),
+          ]
+        : const <NearbyPeer>[],
     pendingCount: 0,
   );
 }
