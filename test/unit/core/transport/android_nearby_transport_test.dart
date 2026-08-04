@@ -183,8 +183,7 @@ void main() {
     );
   });
 
-  test('rejects encoded messages above the conservative byte limit',
-      () async {
+  test('rejects encoded messages above the conservative byte limit', () async {
     await transport.connect();
     await _connectPeer(
       gateway,
@@ -279,8 +278,7 @@ class FakeNearbyConnectionsGateway implements NearbyConnectionsGateway {
   final List<String> rejectedEndpointIds = <String>[];
   final List<String> disconnectedEndpointIds = <String>[];
   final Set<String> failedSendEndpointIds = <String>{};
-  final Map<String, List<Uint8List>> sentPayloads =
-      <String, List<Uint8List>>{};
+  final Map<String, List<Uint8List>> sentPayloads = <String, List<Uint8List>>{};
   final Map<String, NearbyBytesReceived> _bytesCallbacks =
       <String, NearbyBytesReceived>{};
 
