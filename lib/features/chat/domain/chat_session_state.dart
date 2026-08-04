@@ -46,7 +46,9 @@ class ChatTimelineMessage {
       senderLabel: senderLabel,
       timestampUtc: timestampUtc,
       direction: direction,
-      deliveryStatus: deliveryStatus ?? this.deliveryStatus,
+      deliveryStatus: direction == ChatMessageDirection.incoming
+          ? this.deliveryStatus
+          : deliveryStatus ?? this.deliveryStatus,
     );
   }
 }
