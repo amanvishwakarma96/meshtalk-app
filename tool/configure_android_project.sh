@@ -8,6 +8,7 @@ fi
 
 python3 - <<'PY'
 from pathlib import Path
+import re
 
 gradle = Path("android/app/build.gradle.kts")
 text = gradle.read_text()
@@ -19,15 +20,36 @@ gradle.write_text(text)
 
 manifest = Path("android/app/src/main/AndroidManifest.xml")
 text = manifest.read_text()
-permissions = """    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+managed_permissions = [
+    "android.permission.ACCESS_WIFI_STATE",
+    "android.permission.CHANGE_WIFI_STATE",
+    "android.permission.BLUETOOTH",
+    "android.permission.BLUETOOTH_ADMIN",
+    "android.permission.ACCESS_COARSE_LOCATION",
+    "android.permission.ACCESS_FINE_LOCATION",
+    "android.permission.BLUETOOTH_ADVERTISE",
+    "android.permission.BLUETOOTH_CONNECT",
+    "android.permission.BLUETOOTH_SCAN",
+    "android.permission.NEARBY_WIFI_DEVICES",
+    "android.permission.ACCESS_LOCAL_NETWORK",
+]
+for permission in managed_permissions:
+    pattern = rf'\s*<uses-permission\b[^>]*android:name="{re.escape(permission)}"[^>]*/>\s*'
+    text = re.sub(pattern, "\n", text)
+
+permissions = """    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="31" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
 """
 marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
-if "android.permission.BLUETOOTH_SCAN" not in text:
-    text = text.replace(marker, marker + "\n" + permissions)
+text = text.replace(marker, marker + "\n" + permissions, 1)
 manifest.write_text(text)
 PY
