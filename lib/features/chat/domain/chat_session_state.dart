@@ -83,8 +83,7 @@ class ChatSessionState {
       status == ChatConnectionStatus.scanning ||
       status == ChatConnectionStatus.connected;
 
-  bool get canOpenSettings =>
-      status == ChatConnectionStatus.permissionDenied;
+  bool get canOpenSettings => status == ChatConnectionStatus.permissionDenied;
 
   bool get canRetry =>
       status == ChatConnectionStatus.bluetoothOff ||
