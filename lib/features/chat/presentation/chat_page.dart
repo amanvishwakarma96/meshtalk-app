@@ -50,6 +50,7 @@ class ChatPage extends ConsumerWidget {
               await ref
                   .read(profileStoreProvider)
                   .updateDisplayName(displayName);
+              await session.close();
               ref.invalidate(localProfileProvider);
               ref.invalidate(chatSessionProvider);
             },
