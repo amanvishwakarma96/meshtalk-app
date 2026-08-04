@@ -42,6 +42,7 @@ class AndroidNearbyTransport implements ChatTransport {
       <String, NearbyEndpointIdentity>{};
   final Set<String> _connectedEndpointIds = <String>{};
   final Set<String> _pendingEndpointIds = <String>{};
+  final Set<String> _acceptedEndpointIds = <String>{};
 
   late final String _endpointName;
   bool _started = false;
@@ -142,7 +143,8 @@ class AndroidNearbyTransport implements ChatTransport {
     if (!_started &&
         _knownEndpoints.isEmpty &&
         _connectedEndpointIds.isEmpty &&
-        _pendingEndpointIds.isEmpty) {
+        _pendingEndpointIds.isEmpty &&
+        _acceptedEndpointIds.isEmpty) {
       return;
     }
 
@@ -151,6 +153,7 @@ class AndroidNearbyTransport implements ChatTransport {
     _knownEndpoints.clear();
     _connectedEndpointIds.clear();
     _pendingEndpointIds.clear();
+    _acceptedEndpointIds.clear();
     _publishPeers();
   }
 
@@ -183,6 +186,7 @@ class AndroidNearbyTransport implements ChatTransport {
         lastError = error;
         peersChanged = _connectedEndpointIds.remove(endpointId) || peersChanged;
         _knownEndpoints.remove(endpointId);
+        _acceptedEndpointIds.remove(endpointId);
         unawaited(_disconnectEndpointBestEffort(endpointId));
       }
     }
@@ -229,6 +233,7 @@ class AndroidNearbyTransport implements ChatTransport {
       return;
     }
     _pendingEndpointIds.remove(endpointId);
+    _acceptedEndpointIds.remove(endpointId);
     _knownEndpoints.remove(endpointId);
   }
 
@@ -248,10 +253,11 @@ class AndroidNearbyTransport implements ChatTransport {
     }
 
     _knownEndpoints[endpointId] = identity!;
-    if (!_pendingEndpointIds.add(endpointId) &&
-        _connectedEndpointIds.contains(endpointId)) {
+    if (_connectedEndpointIds.contains(endpointId) ||
+        !_acceptedEndpointIds.add(endpointId)) {
       return;
     }
+    _pendingEndpointIds.add(endpointId);
     unawaited(_acceptConnection(endpointId));
   }
 
@@ -264,6 +270,7 @@ class AndroidNearbyTransport implements ChatTransport {
         result != NearbyConnectionResult.connected ||
         !_knownEndpoints.containsKey(endpointId)) {
       _connectedEndpointIds.remove(endpointId);
+      _acceptedEndpointIds.remove(endpointId);
       if (result != NearbyConnectionResult.connected) {
         _knownEndpoints.remove(endpointId);
       }
@@ -278,6 +285,7 @@ class AndroidNearbyTransport implements ChatTransport {
   void _handleDisconnected(String endpointId) {
     _pendingEndpointIds.remove(endpointId);
     _connectedEndpointIds.remove(endpointId);
+    _acceptedEndpointIds.remove(endpointId);
     _knownEndpoints.remove(endpointId);
     _publishPeers();
   }
@@ -308,11 +316,13 @@ class AndroidNearbyTransport implements ChatTransport {
       );
       if (!accepted) {
         _pendingEndpointIds.remove(endpointId);
+        _acceptedEndpointIds.remove(endpointId);
         _knownEndpoints.remove(endpointId);
         await _rejectEndpointBestEffort(endpointId);
       }
     } catch (_) {
       _pendingEndpointIds.remove(endpointId);
+      _acceptedEndpointIds.remove(endpointId);
       _knownEndpoints.remove(endpointId);
       await _rejectEndpointBestEffort(endpointId);
     }
