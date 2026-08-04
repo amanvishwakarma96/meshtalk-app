@@ -78,6 +78,7 @@ abstract interface class NearbyConnectionsGateway {
     required NearbyBytesReceived onBytesReceived,
   });
 
+  Future<bool> rejectConnection(String endpointId);
   Future<void> sendBytes(String endpointId, Uint8List bytes);
   Future<void> disconnectFromEndpoint(String endpointId);
   Future<void> stopAdvertising();
