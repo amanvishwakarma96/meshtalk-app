@@ -53,4 +53,22 @@ class ProfileStore {
       displayName: displayName,
     );
   }
+
+  Future<LocalProfile> updateDisplayName(String rawDisplayName) async {
+    final displayName = rawDisplayName.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (displayName.length < 2 || displayName.length > 24) {
+      throw ArgumentError.value(
+        rawDisplayName,
+        'rawDisplayName',
+        'Display name must contain 2 to 24 characters.',
+      );
+    }
+
+    final profile = await loadOrCreate();
+    await _preferences.writeString(_displayNameKey, displayName);
+    return LocalProfile(
+      deviceId: profile.deviceId,
+      displayName: displayName,
+    );
+  }
 }
