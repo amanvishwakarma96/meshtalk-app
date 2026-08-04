@@ -36,6 +36,7 @@ void main() {
         BleRadioPeer(id: 'peer-a', displayName: 'Peer A'),
       ],
     );
+    await Future<void>.delayed(Duration.zero);
     final message = _message('hello over BLE ' * 30);
 
     await transport.send(message);
@@ -59,6 +60,7 @@ void main() {
         BleRadioPeer(id: 'peer-b', displayName: 'Peer B'),
       ],
     );
+    await Future<void>.delayed(Duration.zero);
 
     await transport.send(message);
     final incoming = transport.incomingMessages.first;
