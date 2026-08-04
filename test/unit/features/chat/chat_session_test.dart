@@ -204,7 +204,8 @@ void main() {
     );
     await _drainEvents();
 
-    expect(fallbackTransport.sentMessages.single.payload, utf8.encode('fallback delivery'));
+    expect(fallbackTransport.sentMessages.single.payload,
+        utf8.encode('fallback delivery'));
     expect(session.state.pendingCount, 0);
     expect(
       messageStore.messages.single.deliveryStatus,
@@ -212,8 +213,7 @@ void main() {
     );
   });
 
-  test('upgrades from Android Nearby to BLE when Bluetooth recovers',
-      () async {
+  test('upgrades from Android Nearby to BLE when Bluetooth recovers', () async {
     radio.currentAvailability = BleRadioAvailability.poweredOff;
     fallbackTransport.forcedAvailability = true;
     await session.initialize();
