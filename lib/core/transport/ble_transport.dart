@@ -13,9 +13,9 @@ class BleTransport implements ChatTransport {
     required BleMeshRadio radio,
     BleChunkFrameCodec frameCodec = const BleChunkFrameCodec(),
     MessageReassembler? reassembler,
-  }) : _radio = radio,
-       _frameCodec = frameCodec,
-       _reassembler = reassembler ?? MessageReassembler();
+  })  : _radio = radio,
+        _frameCodec = frameCodec,
+        _reassembler = reassembler ?? MessageReassembler();
 
   final BleMeshRadio _radio;
   final BleChunkFrameCodec _frameCodec;
@@ -38,10 +38,10 @@ class BleTransport implements ChatTransport {
 
   @override
   TransportCapabilities get capabilities => TransportCapabilities(
-    supportsRelay: true,
-    isOffline: true,
-    maxPayloadBytes: _radio.maximumFrameBytes,
-  );
+        supportsRelay: true,
+        isOffline: true,
+        maxPayloadBytes: _radio.maximumFrameBytes,
+      );
 
   @override
   Stream<MessageEnvelope> get incomingMessages => _incomingMessages.stream;
