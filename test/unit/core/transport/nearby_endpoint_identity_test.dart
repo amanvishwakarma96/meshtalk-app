@@ -25,7 +25,7 @@ void main() {
 
     final identity = codec.decode(encoded)!;
 
-    expect(identity.displayName, 'Mesh Phone With A Ver');
+    expect(identity.displayName, 'Mesh Phone With A Ve');
     expect(identity.displayName.length, 20);
   });
 
