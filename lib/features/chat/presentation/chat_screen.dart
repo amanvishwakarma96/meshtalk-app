@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:meshtalk_app/features/chat/domain/chat_session_state.dart';
+import 'package:meshtalk_app/features/chat/presentation/profile_dialog.dart';
 
 typedef SendMessage = Future<void> Function(String text);
 typedef AsyncAction = Future<void> Function();
@@ -154,73 +155,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _showProfile() async {
-    final formKey = GlobalKey<FormState>();
-    final controller = TextEditingController(
-      text: widget.state.profile.displayName,
-    );
     final displayName = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Local profile'),
-        content: Form(
-          key: formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              TextFormField(
-                key: const ValueKey<String>('display-name-input'),
-                controller: controller,
-                autofocus: true,
-                maxLength: 24,
-                decoration: const InputDecoration(
-                  labelText: 'Display name',
-                  helperText: 'Shown to nearby MeshTalk peers',
-                ),
-                validator: (value) {
-                  final normalized = value?.trim().replaceAll(
-                            RegExp(r'\s+'),
-                            ' ',
-                          ) ??
-                      '';
-                  if (normalized.length < 2) {
-                    return 'Enter at least 2 characters.';
-                  }
-                  if (normalized.length > 24) {
-                    return 'Use no more than 24 characters.';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 12),
-              const Text('Device ID'),
-              const SizedBox(height: 4),
-              SelectableText(widget.state.profile.deviceId),
-              const SizedBox(height: 12),
-              const Text(
-                'This identity and your message history stay on this device.',
-              ),
-            ],
-          ),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            key: const ValueKey<String>('save-profile-button'),
-            onPressed: () {
-              if (formKey.currentState?.validate() ?? false) {
-                Navigator.of(context).pop(controller.text.trim());
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
+      builder: (context) => ProfileDialog(profile: widget.state.profile),
     );
-    controller.dispose();
 
     if (displayName == null ||
         displayName == widget.state.profile.displayName ||
