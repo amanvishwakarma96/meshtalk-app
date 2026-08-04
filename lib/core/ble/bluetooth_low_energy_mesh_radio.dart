@@ -12,14 +12,12 @@ class BluetoothLowEnergyMeshRadio implements BleMeshRadio {
     PeripheralManager? peripheralManager,
     UUID? serviceUuid,
     UUID? characteristicUuid,
-  }) : _centralManager = centralManager ?? CentralManager(),
-       _peripheralManager = peripheralManager ?? PeripheralManager(),
-       serviceUuid =
-           serviceUuid ??
-           UUID.fromString('8d3a0001-2f5d-4c7c-9a3c-3a8f5b7d0001'),
-       characteristicUuid =
-           characteristicUuid ??
-           UUID.fromString('8d3a0002-2f5d-4c7c-9a3c-3a8f5b7d0001');
+  })  : _centralManager = centralManager ?? CentralManager(),
+        _peripheralManager = peripheralManager ?? PeripheralManager(),
+        serviceUuid = serviceUuid ??
+            UUID.fromString('8d3a0001-2f5d-4c7c-9a3c-3a8f5b7d0001'),
+        characteristicUuid = characteristicUuid ??
+            UUID.fromString('8d3a0002-2f5d-4c7c-9a3c-3a8f5b7d0001');
 
   final String localName;
   final CentralManager _centralManager;
@@ -43,7 +41,6 @@ class BluetoothLowEnergyMeshRadio implements BleMeshRadio {
   final List<StreamSubscription<Object?>> _subscriptions =
       <StreamSubscription<Object?>>[];
 
-  GATTCharacteristic? _localCharacteristic;
   bool _started = false;
   int _maximumFrameBytes = 20;
 
@@ -110,7 +107,6 @@ class BluetoothLowEnergyMeshRadio implements BleMeshRadio {
       characteristics: <GATTCharacteristic>[characteristic],
     );
 
-    _localCharacteristic = characteristic;
     _started = true;
     try {
       await _peripheralManager.removeAllServices();
@@ -127,7 +123,6 @@ class BluetoothLowEnergyMeshRadio implements BleMeshRadio {
       _emitAvailability();
     } catch (_) {
       _started = false;
-      _localCharacteristic = null;
       await _safeStopManagers();
       await _cancelSubscriptions();
       rethrow;
@@ -147,7 +142,6 @@ class BluetoothLowEnergyMeshRadio implements BleMeshRadio {
     _subscribedCentrals.clear();
     _peerNames.clear();
     _connectingPeerIds.clear();
-    _localCharacteristic = null;
     _maximumFrameBytes = 20;
     _publishPeers();
   }
@@ -168,7 +162,8 @@ class BluetoothLowEnergyMeshRadio implements BleMeshRadio {
       throw StateError('No Bluetooth LE peers are connected.');
     }
 
-    final outboundEntries = _outboundPeripherals.entries.toList(growable: false);
+    final outboundEntries =
+        _outboundPeripherals.entries.toList(growable: false);
     for (final entry in outboundEntries) {
       await _centralManager.writeCharacteristic(
         entry.key,
@@ -283,11 +278,10 @@ class BluetoothLowEnergyMeshRadio implements BleMeshRadio {
         characteristic,
         state: true,
       );
-      final maximumWriteLength =
-          await _centralManager.getMaximumWriteLength(
-            peripheral,
-            type: GATTCharacteristicWriteType.withoutResponse,
-          );
+      final maximumWriteLength = await _centralManager.getMaximumWriteLength(
+        peripheral,
+        type: GATTCharacteristicWriteType.withoutResponse,
+      );
       _outboundPeripherals[peripheral] = characteristic;
       _maximumFrameBytes = _minimumFrameBytes(
         _maximumFrameBytes,
