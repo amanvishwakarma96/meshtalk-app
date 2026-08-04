@@ -61,6 +61,19 @@ integration_test/
 
 5. Run the app on a physical Android or iOS device. BLE behavior cannot be validated reliably on a simulator.
 
+## Android APK artifacts
+
+The `Android APK` GitHub Actions workflow runs for Android-relevant pull requests, pushes to `main`, and manual workflow dispatches. It:
+
+- generates the Android Flutter scaffold on the runner when the repository does not contain one yet;
+- builds `flutter build apk --release`;
+- uses the GitHub Actions run number as Android `versionCode`;
+- uploads the APK and `SHA256SUMS.txt` as a downloadable workflow artifact for 14 days.
+
+Open the relevant Actions run and download `meshtalk-android-apk-<run-number>` from its **Artifacts** section.
+
+The generated APK currently uses the default Flutter development signing configuration and is intended for internal installation/testing only. A Play Store build requires maintainer-approved release signing secrets and an Android App Bundle workflow.
+
 ## Dependency notes
 
 - `flutter_blue_plus` is the intended BLE adapter dependency. Review its current distribution/licensing terms before publishing binaries.

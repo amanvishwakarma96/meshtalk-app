@@ -13,6 +13,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - BLE mesh envelope, chunking, reassembly, deduplication, and relay primitives.
 - Unit, widget, and mocked two-peer integration tests.
 - Real-device release verification checklist.
+- Android release APK workflow with downloadable artifact and SHA-256 checksum.
 
 ### Changed
 
