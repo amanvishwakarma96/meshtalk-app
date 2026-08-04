@@ -20,6 +20,7 @@ class TransportManager {
 
   ChatTransport? _active;
 
+  List<ChatTransport> get transports => _transports;
   ChatTransport? get active => _active;
   int get pendingCount => _pending.length;
   Stream<ChatTransport?> get changes => _changes.stream;
@@ -33,10 +34,23 @@ class TransportManager {
 
   Future<ChatTransport?> refresh() async {
     ChatTransport? candidate;
+    Object? lastActivationError;
+
     for (final transport in _transports) {
-      if (await transport.isAvailable()) {
+      if (!await transport.isAvailable()) {
+        continue;
+      }
+      if (identical(transport, _active)) {
         candidate = transport;
         break;
+      }
+
+      try {
+        await transport.connect();
+        candidate = transport;
+        break;
+      } catch (error) {
+        lastActivationError = error;
       }
     }
 
@@ -54,10 +68,15 @@ class TransportManager {
       if (previous != null) {
         await previous.disconnect();
       }
+      if (lastActivationError != null) {
+        Error.throwWithStackTrace(
+          lastActivationError,
+          StackTrace.current,
+        );
+      }
       return null;
     }
 
-    await candidate.connect();
     _active = candidate;
     _changes.add(candidate);
     await _flushPending();
