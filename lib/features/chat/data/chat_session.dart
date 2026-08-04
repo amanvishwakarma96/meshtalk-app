@@ -396,10 +396,10 @@ class ChatSession extends ChangeNotifier {
   void _syncPendingCount() {
     final pendingCount = _transportManager.pendingCount;
     final active = _transportManager.active;
-    final statusMessage = _state.status == ChatConnectionStatus.scanning &&
-            active != null
-        ? _searchingMessage(active, pendingCount)
-        : _state.statusMessage;
+    final statusMessage =
+        _state.status == ChatConnectionStatus.scanning && active != null
+            ? _searchingMessage(active, pendingCount)
+            : _state.statusMessage;
     _replaceState(
       _state.copyWith(
         pendingCount: pendingCount,
@@ -425,8 +425,7 @@ class ChatSession extends ChangeNotifier {
         'Searching for nearby MeshTalk peers over BLE…$suffix',
       TransportKind.localWifi =>
         'BLE unavailable. Searching with Android Nearby Connections…$suffix',
-      TransportKind.internetRelay =>
-        'Searching for an internet relay…$suffix',
+      TransportKind.internetRelay => 'Searching for an internet relay…$suffix',
     };
   }
 
