@@ -204,8 +204,10 @@ void main() {
     );
     await _drainEvents();
 
-    expect(fallbackTransport.sentMessages.single.payload,
-        utf8.encode('fallback delivery'));
+    expect(
+      fallbackTransport.sentMessages.single.payload,
+      utf8.encode('fallback delivery'),
+    );
     expect(session.state.pendingCount, 0);
     expect(
       messageStore.messages.single.deliveryStatus,
