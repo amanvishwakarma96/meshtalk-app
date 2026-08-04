@@ -215,7 +215,8 @@ class ChatSession extends ChangeNotifier {
         _replaceState(
           _state.copyWith(
             status: ChatConnectionStatus.error,
-            statusMessage: 'BLE is available, but the transport could not start.',
+            statusMessage:
+                'BLE is available, but the transport could not start.',
           ),
         );
         return;
