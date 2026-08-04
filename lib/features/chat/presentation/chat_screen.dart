@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:meshtalk_app/features/chat/domain/chat_session_state.dart';
+import 'package:meshtalk_app/features/chat/presentation/profile_dialog.dart';
 
 typedef SendMessage = Future<void> Function(String text);
 typedef AsyncAction = Future<void> Function();
+typedef UpdateDisplayName = Future<void> Function(String displayName);
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -10,6 +12,7 @@ class ChatScreen extends StatefulWidget {
     required this.onSend,
     required this.onRetry,
     required this.onOpenSettings,
+    required this.onUpdateDisplayName,
     super.key,
   });
 
@@ -17,6 +20,7 @@ class ChatScreen extends StatefulWidget {
   final SendMessage onSend;
   final AsyncAction onRetry;
   final AsyncAction onOpenSettings;
+  final UpdateDisplayName onUpdateDisplayName;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -151,36 +155,26 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _showProfile() async {
-    await showDialog<void>(
+    final displayName = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Local profile'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(
-              widget.state.profile.displayName,
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 12),
-            const Text('Device ID'),
-            const SizedBox(height: 4),
-            SelectableText(widget.state.profile.deviceId),
-            const SizedBox(height: 12),
-            const Text(
-              'This identity is stored only on this device and does not require an account.',
-            ),
-          ],
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
+      builder: (context) => ProfileDialog(profile: widget.state.profile),
     );
+
+    if (displayName == null ||
+        displayName == widget.state.profile.displayName ||
+        !mounted) {
+      return;
+    }
+
+    try {
+      await widget.onUpdateDisplayName(displayName);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not update the display name.')),
+        );
+      }
+    }
   }
 }
 

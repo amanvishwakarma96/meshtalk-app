@@ -15,12 +15,21 @@ class TransportManager {
   final List<MessageEnvelope> _pending = <MessageEnvelope>[];
   final StreamController<ChatTransport?> _changes =
       StreamController<ChatTransport?>.broadcast();
+  final StreamController<MessageEnvelope> _sentMessages =
+      StreamController<MessageEnvelope>.broadcast();
 
   ChatTransport? _active;
 
   ChatTransport? get active => _active;
   int get pendingCount => _pending.length;
   Stream<ChatTransport?> get changes => _changes.stream;
+  Stream<MessageEnvelope> get sentMessages => _sentMessages.stream;
+
+  void restorePending(Iterable<MessageEnvelope> messages) {
+    for (final message in messages) {
+      _queue(message);
+    }
+  }
 
   Future<ChatTransport?> refresh() async {
     ChatTransport? candidate;
@@ -61,14 +70,15 @@ class TransportManager {
   Future<void> send(MessageEnvelope message) async {
     final transport = _active;
     if (transport == null) {
-      _pending.add(message);
+      _queue(message);
       return;
     }
 
     try {
       await transport.send(message);
+      _sentMessages.add(message);
     } catch (_) {
-      _pending.add(message);
+      _queue(message);
       rethrow;
     }
   }
@@ -80,6 +90,7 @@ class TransportManager {
       await transport.disconnect();
     }
     await _changes.close();
+    await _sentMessages.close();
   }
 
   Future<void> _flushPending() async {
@@ -87,10 +98,18 @@ class TransportManager {
       final message = _pending.removeAt(0);
       try {
         await _active!.send(message);
+        _sentMessages.add(message);
       } catch (_) {
         _pending.insert(0, message);
         rethrow;
       }
     }
+  }
+
+  void _queue(MessageEnvelope message) {
+    if (_pending.any((pending) => pending.id == message.id)) {
+      return;
+    }
+    _pending.add(message);
   }
 }

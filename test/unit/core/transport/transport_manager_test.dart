@@ -50,12 +50,31 @@ void main() {
       when(wifi.isAvailable).thenAnswer((_) async => true);
       final manager = TransportManager(transports: <ChatTransport>[ble, wifi]);
       final message = _message('queued');
+      final sentFuture = manager.sentMessages.first;
 
       await manager.send(message);
       expect(manager.pendingCount, 1);
       await manager.refresh();
 
+      expect(await sentFuture, same(message));
       verify(() => wifi.send(message)).called(1);
+      expect(manager.pendingCount, 0);
+      await manager.dispose();
+    });
+
+    test('restores queued messages once and emits delivery after recovery',
+        () async {
+      when(ble.isAvailable).thenAnswer((_) async => true);
+      final manager = TransportManager(transports: <ChatTransport>[ble]);
+      final message = _message('restored');
+      manager.restorePending(<MessageEnvelope>[message, message]);
+      final sentFuture = manager.sentMessages.first;
+
+      expect(manager.pendingCount, 1);
+      await manager.refresh();
+
+      expect(await sentFuture, same(message));
+      verify(() => ble.send(message)).called(1);
       expect(manager.pendingCount, 0);
       await manager.dispose();
     });

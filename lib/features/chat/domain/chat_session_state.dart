@@ -46,7 +46,9 @@ class ChatTimelineMessage {
       senderLabel: senderLabel,
       timestampUtc: timestampUtc,
       direction: direction,
-      deliveryStatus: deliveryStatus ?? this.deliveryStatus,
+      deliveryStatus: direction == ChatMessageDirection.incoming
+          ? this.deliveryStatus
+          : deliveryStatus ?? this.deliveryStatus,
     );
   }
 }
@@ -90,6 +92,7 @@ class ChatSessionState {
       status == ChatConnectionStatus.error;
 
   ChatSessionState copyWith({
+    LocalProfile? profile,
     ChatConnectionStatus? status,
     String? statusMessage,
     List<ChatTimelineMessage>? messages,
@@ -97,7 +100,7 @@ class ChatSessionState {
     int? pendingCount,
   }) {
     return ChatSessionState(
-      profile: profile,
+      profile: profile ?? this.profile,
       status: status ?? this.status,
       statusMessage: statusMessage ?? this.statusMessage,
       messages: messages ?? this.messages,

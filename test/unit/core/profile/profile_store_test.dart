@@ -30,6 +30,32 @@ void main() {
     expect(profile.deviceId, '550e8400-e29b-41d4-a716-446655440000');
     expect(profile.displayName, 'Trail Phone');
   });
+
+  test('updates the display name without replacing the device id', () async {
+    final preferences = FakeProfilePreferences(
+      <String, String>{
+        'profile.device_id': '550e8400-e29b-41d4-a716-446655440000',
+        'profile.display_name': 'Trail Phone',
+      },
+    );
+    final store = ProfileStore(preferences: preferences);
+
+    final profile = await store.updateDisplayName('  Aman   Phone  ');
+
+    expect(profile.deviceId, '550e8400-e29b-41d4-a716-446655440000');
+    expect(profile.displayName, 'Aman Phone');
+    expect(preferences.values['profile.display_name'], 'Aman Phone');
+  });
+
+  test('rejects display names outside the supported length', () async {
+    final store = ProfileStore(preferences: FakeProfilePreferences());
+
+    await expectLater(store.updateDisplayName('A'), throwsArgumentError);
+    await expectLater(
+      store.updateDisplayName('A' * 25),
+      throwsArgumentError,
+    );
+  });
 }
 
 class FakeProfilePreferences implements ProfilePreferences {
