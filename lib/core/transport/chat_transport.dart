@@ -6,6 +6,32 @@ enum TransportKind {
   internetRelay,
 }
 
+enum TransportActivationFailure {
+  permissionDenied,
+  unsupported,
+  unavailable,
+}
+
+class TransportActivationException implements Exception {
+  const TransportActivationException({
+    required this.transportId,
+    required this.kind,
+    required this.failure,
+    required this.message,
+    this.cause,
+  });
+
+  final String transportId;
+  final TransportKind kind;
+  final TransportActivationFailure failure;
+  final String message;
+  final Object? cause;
+
+  @override
+  String toString() =>
+      'TransportActivationException($transportId, $failure, $message)';
+}
+
 class NearbyPeer {
   const NearbyPeer({required this.id, required this.displayName});
 
