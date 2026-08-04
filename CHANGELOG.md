@@ -14,7 +14,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Unit, widget, and mocked two-peer integration tests.
 - Real-device release verification checklist.
 - Android release APK workflow with downloadable artifact and SHA-256 checksum.
+- Dual-role BLE radio adapter for advertising, scanning, GATT writes, notifications, peer tracking, and MTU-aware frame delivery.
+- Compact binary BLE chunk frame codec and transport-level unit tests.
 
 ### Changed
+
+- Replaced the central-only `flutter_blue_plus` dependency with MIT-licensed `bluetooth_low_energy`, which supports both central and peripheral roles.
+- Android project configuration now enforces API 24 and declares scan, connect, advertise, and legacy discovery permissions.
 
 ### Fixed
