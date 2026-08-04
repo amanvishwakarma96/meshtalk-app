@@ -46,6 +46,13 @@ class ChatPage extends ConsumerWidget {
             onSend: session.send,
             onRetry: session.retry,
             onOpenSettings: session.openSettings,
+            onUpdateDisplayName: (displayName) async {
+              await ref
+                  .read(profileStoreProvider)
+                  .updateDisplayName(displayName);
+              ref.invalidate(localProfileProvider);
+              ref.invalidate(chatSessionProvider);
+            },
           );
         },
       ),
