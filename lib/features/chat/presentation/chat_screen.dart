@@ -132,8 +132,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   const SizedBox(width: 8),
                   IconButton.filled(
                     key: const ValueKey<String>('send-button'),
-                    onPressed:
-                        widget.state.canSend && !_sending ? _send : null,
+                    onPressed: widget.state.canSend && !_sending ? _send : null,
                     icon: _sending
                         ? const SizedBox.square(
                             dimension: 18,
