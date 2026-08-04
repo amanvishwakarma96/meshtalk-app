@@ -24,8 +24,6 @@ abstract interface class BleMeshRadio {
   Stream<List<BleRadioPeer>> get connectedPeers;
   int get maximumFrameBytes;
 
-  Future<BleRadioAvailability> requestAuthorization();
-  Future<void> openAppSettings();
   Future<void> start();
   Future<void> stop();
   Future<void> sendFrame(Uint8List frame);
