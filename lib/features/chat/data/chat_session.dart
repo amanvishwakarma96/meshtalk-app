@@ -6,6 +6,8 @@ import 'package:meshtalk_app/core/ble/ble_mesh_radio.dart';
 import 'package:meshtalk_app/core/ble/mesh_relay_engine.dart';
 import 'package:meshtalk_app/core/ble/message_envelope.dart';
 import 'package:meshtalk_app/core/profile/local_profile.dart';
+import 'package:meshtalk_app/core/storage/message_store.dart';
+import 'package:meshtalk_app/core/storage/stored_chat_message.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
 import 'package:meshtalk_app/core/transport/transport_manager.dart';
 import 'package:meshtalk_app/features/chat/domain/chat_session_state.dart';
@@ -19,20 +21,25 @@ class ChatSession extends ChangeNotifier {
     required BleMeshRadio radio,
     required ChatTransport bleTransport,
     required TransportManager transportManager,
+    required MessageStore messageStore,
     required OpenAppSettings openAppSettings,
     MeshRelayEngine? relayEngine,
     Uuid? uuid,
   })  : _radio = radio,
         _bleTransport = bleTransport,
         _transportManager = transportManager,
+        _messageStore = messageStore,
         _openAppSettings = openAppSettings,
         _relayEngine = relayEngine ?? MeshRelayEngine(),
         _uuid = uuid ?? Uuid(),
         _state = ChatSessionState.initial(profile);
 
+  static const String _roomId = 'nearby';
+
   final BleMeshRadio _radio;
   final ChatTransport _bleTransport;
   final TransportManager _transportManager;
+  final MessageStore _messageStore;
   final OpenAppSettings _openAppSettings;
   final MeshRelayEngine _relayEngine;
   final Uuid _uuid;
@@ -52,12 +59,37 @@ class ChatSession extends ChangeNotifier {
     }
     _initialized = true;
 
+    final history = await _messageStore.loadRoom(_roomId);
+    final pendingOutbound = await _messageStore.loadPendingOutbound();
+    for (final stored in history) {
+      if (stored.direction == StoredMessageDirection.outgoing) {
+        _relayEngine.markOriginated(stored.envelope.id);
+      }
+    }
+    for (final stored in pendingOutbound) {
+      _relayEngine.markOriginated(stored.envelope.id);
+    }
+
+    _replaceState(
+      _state.copyWith(
+        messages: history.map(_toTimelineMessage).toList(growable: false),
+      ),
+    );
+
     _subscriptions
       ..add(_radio.availabilityChanges.listen(_handleAvailabilityChanged))
       ..add(_bleTransport.nearbyPeers.listen(_handlePeersChanged))
-      ..add(_bleTransport.incomingMessages.listen(_handleIncomingMessage));
+      ..add(_bleTransport.incomingMessages.listen(_handleIncomingMessage))
+      ..add(_transportManager.sentMessages.listen(_handleTransportSent));
 
     await _refreshTransport(requestAuthorization: true);
+    _transportManager.restorePending(
+      pendingOutbound.map((stored) => stored.envelope),
+    );
+    _syncPendingCount();
+    if (_state.peers.isNotEmpty && _transportManager.pendingCount > 0) {
+      await _flushQueuedMessages();
+    }
   }
 
   Future<void> retry() async {
@@ -75,38 +107,34 @@ class ChatSession extends ChangeNotifier {
     final envelope = MessageEnvelope(
       id: _uuid.v4(),
       senderId: _state.profile.deviceId,
-      roomId: 'nearby',
+      roomId: _roomId,
       timestampUtc: DateTime.now().toUtc(),
       hopLimit: 4,
       payload: Uint8List.fromList(utf8.encode(text)),
     );
     _relayEngine.markOriginated(envelope.id);
 
-    final timelineMessage = ChatTimelineMessage(
-      id: envelope.id,
-      text: text,
+    final stored = StoredChatMessage(
+      envelope: envelope,
       senderLabel: _state.profile.displayName,
-      timestampUtc: envelope.timestampUtc,
-      direction: ChatMessageDirection.outgoing,
-      deliveryStatus: ChatDeliveryStatus.queued,
+      direction: StoredMessageDirection.outgoing,
+      deliveryStatus: StoredDeliveryStatus.queued,
     );
+    await _messageStore.upsert(stored);
     _replaceState(
       _state.copyWith(
         messages: <ChatTimelineMessage>[
           ..._state.messages,
-          timelineMessage,
+          _toTimelineMessage(stored),
         ],
       ),
     );
 
     try {
       await _transportManager.send(envelope);
-      final deliveryStatus = _transportManager.pendingCount == 0
-          ? ChatDeliveryStatus.sent
-          : ChatDeliveryStatus.queued;
-      _updateDelivery(envelope.id, deliveryStatus);
     } catch (_) {
-      _updateDelivery(envelope.id, ChatDeliveryStatus.queued);
+      // The transport manager keeps failed sends in its in-memory queue while
+      // SQLite remains the process-restart source of truth.
     }
     _syncPendingCount();
   }
@@ -152,29 +180,43 @@ class ChatSession extends ChangeNotifier {
   }
 
   void _handleIncomingMessage(MessageEnvelope envelope) {
+    unawaited(_processIncomingMessage(envelope));
+  }
+
+  void _handleTransportSent(MessageEnvelope envelope) {
+    unawaited(_markMessageSent(envelope.id));
+  }
+
+  Future<void> _processIncomingMessage(MessageEnvelope envelope) async {
     final decision = _relayEngine.processIncoming(envelope);
     if (decision.deliverLocally) {
       final senderSuffix = envelope.senderId.length <= 6
           ? envelope.senderId
           : envelope.senderId.substring(0, 6);
-      final message = ChatTimelineMessage(
-        id: envelope.id,
-        text: utf8.decode(envelope.payload, allowMalformed: true),
+      final stored = StoredChatMessage(
+        envelope: envelope,
         senderLabel: 'Peer $senderSuffix',
-        timestampUtc: envelope.timestampUtc,
-        direction: ChatMessageDirection.incoming,
-        deliveryStatus: ChatDeliveryStatus.received,
+        direction: StoredMessageDirection.incoming,
+        deliveryStatus: StoredDeliveryStatus.received,
       );
+      try {
+        await _messageStore.upsert(stored);
+      } catch (_) {
+        // Delivery remains visible even if local persistence is unavailable.
+      }
       _replaceState(
         _state.copyWith(
-          messages: <ChatTimelineMessage>[..._state.messages, message],
+          messages: <ChatTimelineMessage>[
+            ..._state.messages,
+            _toTimelineMessage(stored),
+          ],
         ),
       );
     }
 
     final relayEnvelope = decision.relayEnvelope;
     if (relayEnvelope != null) {
-      unawaited(_relay(relayEnvelope));
+      await _relay(relayEnvelope);
     }
   }
 
@@ -185,6 +227,15 @@ class ChatSession extends ChangeNotifier {
       // Relay failures remain queued by TransportManager for the next peer.
     }
     _syncPendingCount();
+  }
+
+  Future<void> _markMessageSent(String messageId) async {
+    try {
+      await _messageStore.markSent(messageId);
+    } finally {
+      _updateDelivery(messageId, ChatDeliveryStatus.sent);
+      _syncPendingCount();
+    }
   }
 
   Future<void> _refreshTransport({bool requestAuthorization = false}) async {
@@ -243,25 +294,10 @@ class ChatSession extends ChangeNotifier {
   Future<void> _flushQueuedMessages() async {
     try {
       await _transportManager.refresh();
-      if (_transportManager.pendingCount == 0) {
-        final messages = _state.messages
-            .map(
-              (message) => message.direction == ChatMessageDirection.outgoing &&
-                      message.deliveryStatus == ChatDeliveryStatus.queued
-                  ? message.copyWith(deliveryStatus: ChatDeliveryStatus.sent)
-                  : message,
-            )
-            .toList(growable: false);
-        _replaceState(
-          _state.copyWith(
-            messages: messages,
-            pendingCount: 0,
-          ),
-        );
-      }
     } catch (_) {
-      _syncPendingCount();
+      // Pending entries remain in both TransportManager and SQLite.
     }
+    _syncPendingCount();
   }
 
   void _applyUnavailableState(BleRadioAvailability availability) {
@@ -314,6 +350,24 @@ class ChatSession extends ChangeNotifier {
         pendingCount: pendingCount,
         statusMessage: statusMessage,
       ),
+    );
+  }
+
+  ChatTimelineMessage _toTimelineMessage(StoredChatMessage stored) {
+    return ChatTimelineMessage(
+      id: stored.envelope.id,
+      text: utf8.decode(stored.envelope.payload, allowMalformed: true),
+      senderLabel: stored.senderLabel,
+      timestampUtc: stored.envelope.timestampUtc,
+      direction: switch (stored.direction) {
+        StoredMessageDirection.outgoing => ChatMessageDirection.outgoing,
+        StoredMessageDirection.incoming => ChatMessageDirection.incoming,
+      },
+      deliveryStatus: switch (stored.deliveryStatus) {
+        StoredDeliveryStatus.queued => ChatDeliveryStatus.queued,
+        StoredDeliveryStatus.sent => ChatDeliveryStatus.sent,
+        StoredDeliveryStatus.received => ChatDeliveryStatus.received,
+      },
     );
   }
 
