@@ -44,6 +44,41 @@ void main() {
       await manager.dispose();
     });
 
+    test('continues to fallback when a higher-priority transport fails to start',
+        () async {
+      when(ble.isAvailable).thenAnswer((_) async => true);
+      when(ble.connect).thenAnswer((_) async {
+        throw StateError('BLE start failed');
+      });
+      when(wifi.isAvailable).thenAnswer((_) async => true);
+      final manager = TransportManager(transports: <ChatTransport>[ble, wifi]);
+
+      final selected = await manager.refresh();
+
+      expect(selected, same(wifi));
+      verify(ble.connect).called(1);
+      verify(wifi.connect).called(1);
+      await manager.dispose();
+    });
+
+    test('keeps a working fallback when a BLE upgrade fails', () async {
+      var bleAvailable = false;
+      when(ble.isAvailable).thenAnswer((_) async => bleAvailable);
+      when(wifi.isAvailable).thenAnswer((_) async => true);
+      final manager = TransportManager(transports: <ChatTransport>[ble, wifi]);
+
+      expect(await manager.refresh(), same(wifi));
+      bleAvailable = true;
+      when(ble.connect).thenAnswer((_) async {
+        throw StateError('BLE upgrade failed');
+      });
+
+      expect(await manager.refresh(), same(wifi));
+      expect(manager.active, same(wifi));
+      verifyNever(wifi.disconnect);
+      await manager.dispose();
+    });
+
     test('queues with no transport and flushes after fallback connects',
         () async {
       when(ble.isAvailable).thenAnswer((_) async => false);
