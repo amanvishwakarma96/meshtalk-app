@@ -6,6 +6,8 @@ import 'package:meshtalk_app/core/ble/ble_mesh_radio.dart';
 import 'package:meshtalk_app/core/ble/mesh_relay_engine.dart';
 import 'package:meshtalk_app/core/ble/message_envelope.dart';
 import 'package:meshtalk_app/core/profile/local_profile.dart';
+import 'package:meshtalk_app/core/security/message_protector.dart';
+import 'package:meshtalk_app/core/security/secure_room.dart';
 import 'package:meshtalk_app/core/storage/message_store.dart';
 import 'package:meshtalk_app/core/storage/stored_chat_message.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
@@ -21,24 +23,30 @@ typedef OpenAppSettings = Future<void> Function();
 class ChatSession extends ChangeNotifier {
   ChatSession({
     required LocalProfile profile,
+    required SecureRoom secureRoom,
     required BleMeshRadio radio,
     required ChatTransport bleTransport,
     required TransportManager transportManager,
     required MessageStore messageStore,
     required OpenAppSettings openAppSettings,
+    MessageProtector? messageProtector,
     MeshRelayEngine? relayEngine,
     Uuid? uuid,
-  })  : _radio = radio,
+  })  : _secureRoom = secureRoom,
+        _messageProtector = messageProtector ?? MessageProtector(),
+        _radio = radio,
         _bleTransport = bleTransport,
         _transportManager = transportManager,
         _messageStore = messageStore,
         _openAppSettings = openAppSettings,
         _relayEngine = relayEngine ?? MeshRelayEngine(),
         _uuid = uuid ?? Uuid(),
-        _state = ChatSessionState.initial(profile);
+        _state = ChatSessionState.initial(profile, secureRoom.summary);
 
-  static const String _roomId = 'nearby';
+  static const String _legacyRoomId = 'nearby';
 
+  final SecureRoom _secureRoom;
+  final MessageProtector _messageProtector;
   final BleMeshRadio _radio;
   final ChatTransport _bleTransport;
   final TransportManager _transportManager;
@@ -71,8 +79,27 @@ class ChatSession extends ChangeNotifier {
     }
     _initialized = true;
 
-    final history = await _messageStore.loadRoom(_roomId);
-    final pendingOutbound = await _messageStore.loadPendingOutbound();
+    final secureHistory = await _messageStore.loadRoom(_secureRoom.id);
+    final legacyHistory = _secureRoom.id == _legacyRoomId
+        ? const <StoredChatMessage>[]
+        : await _messageStore.loadRoom(_legacyRoomId);
+    final pendingOutbound = await _preparePendingOutbound(
+      await _messageStore.loadPendingOutbound(),
+    );
+    final historyById = <String, StoredChatMessage>{};
+    for (final stored in <StoredChatMessage>[
+      ...legacyHistory,
+      ...secureHistory,
+    ]) {
+      historyById[stored.envelope.id] = stored;
+    }
+    final history = historyById.values.toList(growable: false)
+      ..sort(
+        (left, right) => left.envelope.timestampUtc.compareTo(
+          right.envelope.timestampUtc,
+        ),
+      );
+
     for (final stored in history) {
       if (stored.direction == StoredMessageDirection.outgoing) {
         _relayEngine.markOriginated(stored.envelope.id);
@@ -82,9 +109,13 @@ class ChatSession extends ChangeNotifier {
       _relayEngine.markOriginated(stored.envelope.id);
     }
 
+    final timeline = <ChatTimelineMessage>[];
+    for (final stored in history) {
+      timeline.add(await _timelineFromStored(stored));
+    }
     _replaceState(
       _state.copyWith(
-        messages: history.map(_toTimelineMessage).toList(growable: false),
+        messages: List<ChatTimelineMessage>.unmodifiable(timeline),
         diagnostics: TransportDiagnosticsSnapshot.initial(_radio.availability),
       ),
     );
@@ -188,13 +219,18 @@ class ChatSession extends ChangeNotifier {
       return;
     }
 
-    final envelope = MessageEnvelope(
+    final baseEnvelope = MessageEnvelope(
       id: _uuid.v4(),
       senderId: _state.profile.deviceId,
-      roomId: _roomId,
+      roomId: _secureRoom.id,
       timestampUtc: DateTime.now().toUtc(),
       hopLimit: 4,
-      payload: Uint8List.fromList(utf8.encode(text)),
+      payload: Uint8List(0),
+    );
+    final envelope = await _messageProtector.protect(
+      envelope: baseEnvelope,
+      clearText: Uint8List.fromList(utf8.encode(text)),
+      room: _secureRoom,
     );
     _relayEngine.markOriginated(envelope.id);
 
@@ -209,7 +245,11 @@ class ChatSession extends ChangeNotifier {
       _state.copyWith(
         messages: <ChatTimelineMessage>[
           ..._state.messages,
-          _toTimelineMessage(stored),
+          _timelineMessage(
+            stored: stored,
+            text: text,
+            protectionStatus: MessageProtectionStatus.endToEndEncrypted,
+          ),
         ],
       ),
     );
@@ -321,35 +361,58 @@ class ChatSession extends ChangeNotifier {
 
   Future<void> _processIncomingMessage(MessageEnvelope envelope) async {
     final decision = _relayEngine.processIncoming(envelope);
-    if (decision.deliverLocally) {
-      final senderSuffix = envelope.senderId.length <= 6
-          ? envelope.senderId
-          : envelope.senderId.substring(0, 6);
-      final stored = StoredChatMessage(
-        envelope: envelope,
-        senderLabel: 'Peer $senderSuffix',
-        direction: StoredMessageDirection.incoming,
-        deliveryStatus: StoredDeliveryStatus.received,
-      );
-      try {
-        await _messageStore.upsert(stored);
-      } catch (_) {
-        // Delivery remains visible even if local persistence is unavailable.
-      }
-      _replaceState(
-        _state.copyWith(
-          messages: <ChatTimelineMessage>[
-            ..._state.messages,
-            _toTimelineMessage(stored),
-          ],
-        ),
-      );
+    if (decision.deliverLocally && envelope.roomId == _secureRoom.id) {
+      await _deliverSecureMessage(envelope);
     }
 
     final relayEnvelope = decision.relayEnvelope;
     if (relayEnvelope != null) {
       await _relay(relayEnvelope);
     }
+  }
+
+  Future<void> _deliverSecureMessage(MessageEnvelope envelope) async {
+    if (_state.messages.any((message) => message.id == envelope.id)) {
+      return;
+    }
+
+    late final UnprotectedMessage unprotected;
+    try {
+      unprotected = await _messageProtector.unprotect(
+        envelope: envelope,
+        room: _secureRoom,
+      );
+    } on MessageProtectionException catch (error) {
+      _recordProtectionError(error.message);
+      return;
+    }
+
+    final senderSuffix = envelope.senderId.length <= 6
+        ? envelope.senderId
+        : envelope.senderId.substring(0, 6);
+    final stored = StoredChatMessage(
+      envelope: envelope,
+      senderLabel: 'Peer $senderSuffix',
+      direction: StoredMessageDirection.incoming,
+      deliveryStatus: StoredDeliveryStatus.received,
+    );
+    try {
+      await _messageStore.upsert(stored);
+    } catch (_) {
+      // Authenticated delivery remains visible if local persistence is down.
+    }
+    _replaceState(
+      _state.copyWith(
+        messages: <ChatTimelineMessage>[
+          ..._state.messages,
+          _timelineMessage(
+            stored: stored,
+            text: utf8.decode(unprotected.clearText, allowMalformed: true),
+            protectionStatus: unprotected.status,
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _relay(MessageEnvelope envelope) async {
@@ -369,6 +432,89 @@ class ChatSession extends ChangeNotifier {
       _updateDelivery(messageId, ChatDeliveryStatus.sent);
       _syncPendingCount();
     }
+  }
+
+  Future<List<StoredChatMessage>> _preparePendingOutbound(
+    List<StoredChatMessage> storedMessages,
+  ) async {
+    final ready = <StoredChatMessage>[];
+    for (final stored in storedMessages) {
+      if (stored.direction != StoredMessageDirection.outgoing) {
+        continue;
+      }
+      final envelope = stored.envelope;
+      if (_messageProtector.isProtectedPayload(envelope.payload)) {
+        if (envelope.roomId == _secureRoom.id) {
+          ready.add(stored);
+        }
+        continue;
+      }
+
+      final baseEnvelope = envelope.copyWith(
+        roomId: _secureRoom.id,
+        payload: Uint8List(0),
+      );
+      final encryptedEnvelope = await _messageProtector.protect(
+        envelope: baseEnvelope,
+        clearText: envelope.payload,
+        room: _secureRoom,
+      );
+      final migrated = StoredChatMessage(
+        envelope: encryptedEnvelope,
+        senderLabel: stored.senderLabel,
+        direction: stored.direction,
+        deliveryStatus: stored.deliveryStatus,
+      );
+      await _messageStore.upsert(migrated);
+      ready.add(migrated);
+    }
+    return List<StoredChatMessage>.unmodifiable(ready);
+  }
+
+  Future<ChatTimelineMessage> _timelineFromStored(
+    StoredChatMessage stored,
+  ) async {
+    try {
+      final unprotected = await _messageProtector.unprotect(
+        envelope: stored.envelope,
+        room: _secureRoom,
+        allowLegacy: true,
+      );
+      return _timelineMessage(
+        stored: stored,
+        text: utf8.decode(unprotected.clearText, allowMalformed: true),
+        protectionStatus: unprotected.status,
+      );
+    } on MessageProtectionException {
+      return _timelineMessage(
+        stored: stored,
+        text: 'Encrypted message could not be authenticated with this room key.',
+        protectionStatus: MessageProtectionStatus.unableToDecrypt,
+      );
+    }
+  }
+
+  ChatTimelineMessage _timelineMessage({
+    required StoredChatMessage stored,
+    required String text,
+    required MessageProtectionStatus protectionStatus,
+  }) {
+    return ChatTimelineMessage(
+      id: stored.envelope.id,
+      text: text,
+      senderLabel: stored.senderLabel,
+      timestampUtc: stored.envelope.timestampUtc,
+      direction: switch (stored.direction) {
+        StoredMessageDirection.outgoing => ChatMessageDirection.outgoing,
+        StoredMessageDirection.incoming => ChatMessageDirection.incoming,
+      },
+      deliveryStatus: switch (stored.deliveryStatus) {
+        StoredDeliveryStatus.queued => ChatDeliveryStatus.queued,
+        StoredDeliveryStatus.sent => ChatDeliveryStatus.sent,
+        StoredDeliveryStatus.received => ChatDeliveryStatus.received,
+      },
+      protectionStatus: protectionStatus,
+    );
   }
 
   Future<void> _refreshTransport({bool requestAuthorization = false}) async {
@@ -579,6 +725,14 @@ class ChatSession extends ChangeNotifier {
     _replaceState(_state.copyWith(diagnostics: diagnostics));
   }
 
+  void _recordProtectionError(String message) {
+    final active = _transportManager.active;
+    final diagnostics = active == null
+        ? _diagnosticsWithoutActive(message)
+        : _diagnosticsForActive(active, lastError: message);
+    _replaceState(_state.copyWith(diagnostics: diagnostics));
+  }
+
   List<NearbyPeer> get _activePeers {
     final active = _transportManager.active;
     if (active == null) {
@@ -626,7 +780,7 @@ class ChatSession extends ChangeNotifier {
         : ' $pendingCount message${pendingCount == 1 ? '' : 's'} queued.';
     return switch (transport.kind) {
       TransportKind.bleMesh =>
-        'Searching for nearby MeshTalk peers over BLE…$suffix',
+        'Searching for encrypted room peers over BLE…$suffix',
       TransportKind.localWifi =>
         'BLE unavailable. Searching with ${_localTransportName(transport)}…$suffix',
       TransportKind.internetRelay => 'Searching for an internet relay…$suffix',
@@ -654,24 +808,6 @@ class ChatSession extends ChangeNotifier {
       'ios-multipeer' => 'iOS Multipeer Connectivity',
       _ => 'local-network fallback',
     };
-  }
-
-  ChatTimelineMessage _toTimelineMessage(StoredChatMessage stored) {
-    return ChatTimelineMessage(
-      id: stored.envelope.id,
-      text: utf8.decode(stored.envelope.payload, allowMalformed: true),
-      senderLabel: stored.senderLabel,
-      timestampUtc: stored.envelope.timestampUtc,
-      direction: switch (stored.direction) {
-        StoredMessageDirection.outgoing => ChatMessageDirection.outgoing,
-        StoredMessageDirection.incoming => ChatMessageDirection.incoming,
-      },
-      deliveryStatus: switch (stored.deliveryStatus) {
-        StoredDeliveryStatus.queued => ChatDeliveryStatus.queued,
-        StoredDeliveryStatus.sent => ChatDeliveryStatus.sent,
-        StoredDeliveryStatus.received => ChatDeliveryStatus.received,
-      },
-    );
   }
 
   void _replaceState(ChatSessionState nextState) {
