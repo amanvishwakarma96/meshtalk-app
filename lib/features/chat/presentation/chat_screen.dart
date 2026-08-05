@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:meshtalk_app/core/transport/chat_transport.dart';
 import 'package:meshtalk_app/features/chat/domain/chat_session_state.dart';
 import 'package:meshtalk_app/features/chat/presentation/profile_dialog.dart';
 
@@ -234,18 +235,26 @@ class _ConnectionCard extends StatelessWidget {
           padding: const EdgeInsets.all(12),
           child: Row(
             children: <Widget>[
-              Icon(_statusIcon(state.status)),
+              Icon(_statusIcon(state)),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     Text(
-                      _statusTitle(state.status),
+                      _statusTitle(state),
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                     const SizedBox(height: 2),
                     Text(state.statusMessage),
+                    if (state.activeTransportKind == TransportKind.localWifi)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 4),
+                        child: Text(
+                          'Peer identity is not authenticated yet.',
+                          key: ValueKey<String>('nearby-auth-warning'),
+                        ),
+                      ),
                     if (state.pendingCount > 0) ...<Widget>[
                       const SizedBox(height: 4),
                       Text('${state.pendingCount} queued'),
@@ -264,26 +273,41 @@ class _ConnectionCard extends StatelessWidget {
     );
   }
 
-  IconData _statusIcon(ChatConnectionStatus status) {
-    return switch (status) {
+  IconData _statusIcon(ChatSessionState state) {
+    return switch (state.status) {
       ChatConnectionStatus.initializing => Icons.hourglass_top,
       ChatConnectionStatus.permissionDenied => Icons.bluetooth_disabled,
+      ChatConnectionStatus.localNetworkPermissionDenied => Icons.wifi_off,
       ChatConnectionStatus.bluetoothOff => Icons.bluetooth_disabled,
       ChatConnectionStatus.unsupported => Icons.phonelink_erase,
-      ChatConnectionStatus.scanning => Icons.bluetooth_searching,
-      ChatConnectionStatus.connected => Icons.bluetooth_connected,
+      ChatConnectionStatus.scanning =>
+        state.activeTransportKind == TransportKind.localWifi
+            ? Icons.wifi_find
+            : Icons.bluetooth_searching,
+      ChatConnectionStatus.connected =>
+        state.activeTransportKind == TransportKind.localWifi
+            ? Icons.wifi
+            : Icons.bluetooth_connected,
       ChatConnectionStatus.error => Icons.error_outline,
     };
   }
 
-  String _statusTitle(ChatConnectionStatus status) {
-    return switch (status) {
+  String _statusTitle(ChatSessionState state) {
+    return switch (state.status) {
       ChatConnectionStatus.initializing => 'Starting nearby chat',
       ChatConnectionStatus.permissionDenied => 'Bluetooth permission denied',
+      ChatConnectionStatus.localNetworkPermissionDenied =>
+        'Nearby permission denied',
       ChatConnectionStatus.bluetoothOff => 'Bluetooth is off',
-      ChatConnectionStatus.unsupported => 'BLE mesh unsupported',
-      ChatConnectionStatus.scanning => 'Searching nearby',
-      ChatConnectionStatus.connected => 'Nearby mesh connected',
+      ChatConnectionStatus.unsupported => 'Nearby transport unsupported',
+      ChatConnectionStatus.scanning =>
+        state.activeTransportKind == TransportKind.localWifi
+            ? 'Searching with Android Nearby'
+            : 'Searching nearby over BLE',
+      ChatConnectionStatus.connected =>
+        state.activeTransportKind == TransportKind.localWifi
+            ? 'Android Nearby connected'
+            : 'Nearby BLE connected',
       ChatConnectionStatus.error => 'Nearby chat error',
     };
   }

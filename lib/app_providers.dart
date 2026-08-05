@@ -7,8 +7,11 @@ import 'package:meshtalk_app/core/profile/local_profile.dart';
 import 'package:meshtalk_app/core/profile/profile_store.dart';
 import 'package:meshtalk_app/core/storage/message_store.dart';
 import 'package:meshtalk_app/core/storage/sqlite_message_store.dart';
+import 'package:meshtalk_app/core/transport/android_nearby_transport.dart';
 import 'package:meshtalk_app/core/transport/ble_transport.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
+import 'package:meshtalk_app/core/transport/nearby_connections_gateway.dart';
+import 'package:meshtalk_app/core/transport/plugin_nearby_connections_gateway.dart';
 import 'package:meshtalk_app/core/transport/transport_manager.dart';
 import 'package:meshtalk_app/features/chat/data/chat_session.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -41,13 +44,26 @@ final bleRadioFactoryProvider = Provider<BleRadioFactory>((ref) {
   };
 });
 
+final nearbyConnectionsGatewayProvider = Provider<NearbyConnectionsGateway>(
+  (ref) => PluginNearbyConnectionsGateway(),
+);
+
 final chatSessionProvider = FutureProvider<ChatSession>((ref) async {
   final profile = await ref.watch(localProfileProvider.future);
   final radio = ref.watch(bleRadioFactoryProvider)(profile);
   final bleTransport = BleTransport(radio: radio);
-  final transportManager = TransportManager(
-    transports: <ChatTransport>[bleTransport],
-  );
+  final nearbyGateway = ref.watch(nearbyConnectionsGatewayProvider);
+  final transports = <ChatTransport>[bleTransport];
+  if (nearbyGateway.isSupported) {
+    transports.add(
+      AndroidNearbyTransport(
+        profile: profile,
+        gateway: nearbyGateway,
+      ),
+    );
+  }
+
+  final transportManager = TransportManager(transports: transports);
   final session = ChatSession(
     profile: profile,
     radio: radio,

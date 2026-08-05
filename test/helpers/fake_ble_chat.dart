@@ -44,6 +44,11 @@ class FakeBleRadio implements BleMeshRadio {
   @override
   Future<void> stop() async {}
 
+  void emitAvailability(BleRadioAvailability availability) {
+    currentAvailability = availability;
+    _availabilityController.add(availability);
+  }
+
   Future<void> close() async {
     await _availabilityController.close();
     await _frameController.close();
@@ -52,9 +57,17 @@ class FakeBleRadio implements BleMeshRadio {
 }
 
 class FakeChatTransport implements ChatTransport {
-  FakeChatTransport(this.radio);
+  FakeChatTransport(
+    this.radio, {
+    this.transportId = 'fake-ble',
+    this.transportKind = TransportKind.bleMesh,
+    this.forcedAvailability,
+  });
 
   final FakeBleRadio radio;
+  final String transportId;
+  final TransportKind transportKind;
+  bool? forcedAvailability;
   final StreamController<MessageEnvelope> _incomingController =
       StreamController<MessageEnvelope>.broadcast();
   final StreamController<List<NearbyPeer>> _peerController =
@@ -62,6 +75,8 @@ class FakeChatTransport implements ChatTransport {
   final List<MessageEnvelope> sentMessages = <MessageEnvelope>[];
   List<NearbyPeer> _peers = const <NearbyPeer>[];
   bool _connected = false;
+
+  bool get connected => _connected;
 
   @override
   TransportCapabilities get capabilities => const TransportCapabilities(
@@ -71,13 +86,13 @@ class FakeChatTransport implements ChatTransport {
       );
 
   @override
-  String get id => 'fake-ble';
+  String get id => transportId;
 
   @override
   Stream<MessageEnvelope> get incomingMessages => _incomingController.stream;
 
   @override
-  TransportKind get kind => TransportKind.bleMesh;
+  TransportKind get kind => transportKind;
 
   @override
   Stream<List<NearbyPeer>> get nearbyPeers => _peerController.stream;
@@ -87,18 +102,28 @@ class FakeChatTransport implements ChatTransport {
     if (_connected) {
       return;
     }
-    await radio.start();
+    if (transportKind == TransportKind.bleMesh) {
+      await radio.start();
+    }
     _connected = true;
   }
 
   @override
   Future<void> disconnect() async {
     _connected = false;
+    _peers = const <NearbyPeer>[];
+    _peerController.add(const <NearbyPeer>[]);
   }
 
   @override
   Future<bool> isAvailable() async {
-    return radio.availability == BleRadioAvailability.ready;
+    final forced = forcedAvailability;
+    if (forced != null) {
+      return forced;
+    }
+    return transportKind == TransportKind.bleMesh
+        ? radio.availability == BleRadioAvailability.ready
+        : true;
   }
 
   @override

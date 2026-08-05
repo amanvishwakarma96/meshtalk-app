@@ -47,7 +47,8 @@ void main() {
     expect(find.text('reply nearby'), findsNothing);
   });
 
-  testWidgets('shows an actionable permission-denied state', (tester) async {
+  testWidgets('shows an actionable Bluetooth permission-denied state',
+      (tester) async {
     var openedSettings = false;
     await tester.pumpWidget(
       MaterialApp(
@@ -64,10 +65,59 @@ void main() {
     );
 
     expect(find.text('Bluetooth permission denied'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey<String>('open-settings-button')),
+    );
+    await tester.pump();
+
+    expect(openedSettings, isTrue);
+  });
+
+  testWidgets('labels the unauthenticated Android Nearby fallback',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          state: _state(
+            status: ChatConnectionStatus.connected,
+            activeTransportKind: TransportKind.localWifi,
+          ),
+          onSend: (_) async {},
+          onRetry: () async {},
+          onOpenSettings: () async {},
+          onUpdateDisplayName: (_) async {},
+        ),
+      ),
+    );
+
+    expect(find.text('Android Nearby connected'), findsOneWidget);
     expect(
-      find.byKey(const ValueKey<String>('send-button')),
+      find.byKey(const ValueKey<String>('nearby-auth-warning')),
       findsOneWidget,
     );
+    expect(find.textContaining('unverified Android Nearby'), findsWidgets);
+  });
+
+  testWidgets('opens settings for denied Android Nearby permissions',
+      (tester) async {
+    var openedSettings = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          state: _state(
+            status: ChatConnectionStatus.localNetworkPermissionDenied,
+          ),
+          onSend: (_) async {},
+          onRetry: () async {},
+          onOpenSettings: () async {
+            openedSettings = true;
+          },
+          onUpdateDisplayName: (_) async {},
+        ),
+      ),
+    );
+
+    expect(find.text('Nearby permission denied'), findsOneWidget);
     await tester.tap(
       find.byKey(const ValueKey<String>('open-settings-button')),
     );
@@ -111,22 +161,30 @@ void main() {
 ChatSessionState _state({
   required ChatConnectionStatus status,
   List<ChatTimelineMessage> messages = const <ChatTimelineMessage>[],
+  TransportKind? activeTransportKind,
 }) {
+  final connected = status == ChatConnectionStatus.connected;
+  final localWifi = activeTransportKind == TransportKind.localWifi;
   return ChatSessionState(
     profile: const LocalProfile(
       deviceId: '550e8400-e29b-41d4-a716-446655440000',
       displayName: 'Trail Phone',
     ),
     status: status,
-    statusMessage: status == ChatConnectionStatus.connected
-        ? 'Connected to 1 nearby peer over BLE.'
-        : 'Bluetooth permission is required for nearby mesh chat.',
+    statusMessage: connected
+        ? localWifi
+            ? 'Connected to 1 nearby peer using the unverified Android Nearby fallback.'
+            : 'Connected to 1 nearby peer over BLE.'
+        : status == ChatConnectionStatus.localNetworkPermissionDenied
+            ? 'Nearby devices permission is required for the Android fallback.'
+            : 'Bluetooth permission is required for nearby mesh chat.',
     messages: messages,
-    peers: status == ChatConnectionStatus.connected
+    peers: connected
         ? const <NearbyPeer>[
             NearbyPeer(id: 'peer-a', displayName: 'Peer A'),
           ]
         : const <NearbyPeer>[],
     pendingCount: 0,
+    activeTransportKind: activeTransportKind,
   );
 }

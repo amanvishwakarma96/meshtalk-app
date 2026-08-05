@@ -22,13 +22,18 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Restart-safe restoration and retry of queued outbound messages.
 - Editable local display name with BLE session restart and re-advertising.
 - In-memory SQLite schema tests and restart-recovery session tests.
+- Android-only Nearby Connections fallback using the P2P cluster strategy and byte payloads.
+- Stable MeshTalk endpoint identities, deterministic connection initiation, invalid-peer rejection, and fallback-specific UI warnings.
+- Android Nearby transport tests for authorization, discovery, connection, broadcast delivery, malformed payloads, and cleanup.
 
 ### Changed
 
-- Replaced the central-only `flutter_blue_plus` dependency with MIT-licensed `bluetooth_low_energy`, which supports both central and peripheral roles.
-- Android project configuration now enforces API 24 and declares scan, connect, advertise, and legacy discovery permissions.
+- Replaced the central-only `flutter_blue_plus` dependency with MIT-licensed `bluetooth_low_energy`, which supports both BLE central and peripheral roles.
+- Android project configuration now enforces API 24 and declares BLE, Wi-Fi state, Nearby Wi-Fi, legacy location, and local-network permissions without storage access.
 - The app now launches the live session-backed chat page instead of the static chat shell.
 - `TransportManager` now emits successful-send events used to update durable delivery state.
+- `TransportManager` now continues to lower-priority transports when a higher-priority transport fails to activate and preserves a working fallback when an upgrade fails.
+- `ChatSession` now consumes peer and message streams from every registered transport while keeping BLE as the first priority.
 
 ### Fixed
 

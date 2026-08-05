@@ -17,6 +17,7 @@ import '../../../helpers/fake_message_store.dart';
 void main() {
   late FakeBleRadio radio;
   late FakeChatTransport transport;
+  late FakeChatTransport fallbackTransport;
   late FakeMessageStore messageStore;
   late ChatSession session;
   var settingsOpened = false;
@@ -24,6 +25,12 @@ void main() {
   setUp(() {
     radio = FakeBleRadio();
     transport = FakeChatTransport(radio);
+    fallbackTransport = FakeChatTransport(
+      radio,
+      transportId: 'fake-android-nearby',
+      transportKind: TransportKind.localWifi,
+      forcedAvailability: false,
+    );
     messageStore = FakeMessageStore();
     settingsOpened = false;
     session = ChatSession(
@@ -34,7 +41,7 @@ void main() {
       radio: radio,
       bleTransport: transport,
       transportManager: TransportManager(
-        transports: <ChatTransport>[transport],
+        transports: <ChatTransport>[transport, fallbackTransport],
       ),
       messageStore: messageStore,
       openAppSettings: () async {
@@ -46,6 +53,7 @@ void main() {
   tearDown(() async {
     await session.close();
     await transport.close();
+    await fallbackTransport.close();
     await radio.close();
   });
 
@@ -156,6 +164,75 @@ void main() {
     expect(session.state.status, ChatConnectionStatus.permissionDenied);
     await session.openSettings();
     expect(settingsOpened, isTrue);
+  });
+
+  test('activates Android Nearby when Bluetooth is off', () async {
+    radio.currentAvailability = BleRadioAvailability.poweredOff;
+    fallbackTransport.forcedAvailability = true;
+
+    await session.initialize();
+
+    expect(session.state.status, ChatConnectionStatus.scanning);
+    expect(session.state.activeTransportKind, TransportKind.localWifi);
+    expect(session.state.statusMessage, contains('Android Nearby Connections'));
+
+    fallbackTransport.emitPeers(
+      const <NearbyPeer>[
+        NearbyPeer(id: 'peer-wifi', displayName: 'Nearby Peer'),
+      ],
+    );
+    await _drainEvents();
+
+    expect(session.state.status, ChatConnectionStatus.connected);
+    expect(session.state.activeTransportKind, TransportKind.localWifi);
+    expect(session.state.statusMessage, contains('unverified Android Nearby'));
+  });
+
+  test('flushes the durable queue through the Android Nearby fallback',
+      () async {
+    radio.currentAvailability = BleRadioAvailability.poweredOff;
+    fallbackTransport.forcedAvailability = true;
+    await session.initialize();
+    await session.send('fallback delivery');
+
+    expect(session.state.pendingCount, 1);
+
+    fallbackTransport.emitPeers(
+      const <NearbyPeer>[
+        NearbyPeer(id: 'peer-wifi', displayName: 'Nearby Peer'),
+      ],
+    );
+    await _drainEvents();
+
+    expect(
+      fallbackTransport.sentMessages.single.payload,
+      utf8.encode('fallback delivery'),
+    );
+    expect(session.state.pendingCount, 0);
+    expect(
+      messageStore.messages.single.deliveryStatus,
+      StoredDeliveryStatus.sent,
+    );
+  });
+
+  test('upgrades from Android Nearby to BLE when Bluetooth recovers', () async {
+    radio.currentAvailability = BleRadioAvailability.poweredOff;
+    fallbackTransport.forcedAvailability = true;
+    await session.initialize();
+    fallbackTransport.emitPeers(
+      const <NearbyPeer>[
+        NearbyPeer(id: 'peer-wifi', displayName: 'Nearby Peer'),
+      ],
+    );
+    await _drainEvents();
+    expect(session.state.activeTransportKind, TransportKind.localWifi);
+
+    radio.emitAvailability(BleRadioAvailability.ready);
+    await _drainEvents();
+
+    expect(session.state.activeTransportKind, TransportKind.bleMesh);
+    expect(session.state.status, ChatConnectionStatus.scanning);
+    expect(fallbackTransport.connected, isFalse);
   });
 }
 

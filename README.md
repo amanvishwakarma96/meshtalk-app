@@ -1,23 +1,24 @@
 # MeshTalk
 
-MeshTalk is an offline-first mobile chat application for nearby users. Its primary transport is Bluetooth Low Energy (BLE) mesh, with local Wi-Fi and optional internet relay fallbacks selected through a transport abstraction.
+MeshTalk is an offline-first mobile chat application for nearby users. Its primary transport is Bluetooth Low Energy (BLE) mesh, with local transports and an optional internet relay selected through a transport abstraction.
 
 ## Status
 
-Phase 1 is under active development. The app now creates a persistent local identity, starts the dual-role BLE transport, shows live permission/radio/peer state, stores local history in SQLite, restores unsent messages after process restart, and delivers or relays received envelopes through the mesh protocol. Local Wi-Fi and internet fallback transports are still pending.
+Phase 1 is under active development. The app creates a persistent local identity, starts the dual-role BLE transport, stores local history in SQLite, restores unsent messages after process restart, and delivers or relays envelopes through the mesh protocol. Android now has a Nearby Connections fallback when BLE is unavailable. Equivalent iOS fallback behavior and the optional internet relay remain pending.
 
 ## Transport priority
 
 1. BLE mesh
-2. Local Wi-Fi / Nearby Connections / Multipeer Connectivity
-3. Clearly labelled internet relay
-4. Actionable no-transport state
+2. Android Nearby Connections fallback
+3. Future iOS Network or Multipeer adapter
+4. Clearly labelled optional internet relay
+5. Actionable no-transport state
 
-The chat feature does not depend directly on a BLE plugin. `TransportManager` chooses and hot-swaps `ChatTransport` implementations without changing message identity or relay semantics.
+`TransportManager` chooses and hot-swaps `ChatTransport` implementations without changing message identity, storage, relay TTL, or deduplication semantics. A higher-priority transport must activate successfully before a working fallback is disconnected.
 
 ## Security notice
 
-MeshTalk is **not end-to-end encrypted yet**. BLE pairing or bonding may protect an individual radio link, but relayed message payloads remain readable at the application layer by intermediate peers. Do not use the current build for sensitive communications. This warning remains visible in the chat UI until message-level encryption ships.
+MeshTalk is **not end-to-end encrypted yet**. BLE pairing or bonding may protect an individual radio link, but relayed application payloads remain readable by intermediate peers. Android Nearby connections are currently accepted only when the endpoint advertises a valid MeshTalk identity, but that identity and the platform authentication token are not yet confirmed by the user. The fallback is therefore explicitly labelled unverified. Do not use the current build for sensitive communications.
 
 ## Architecture
 
@@ -28,10 +29,10 @@ lib/
     profile/             # persistent local identity and editable name
     permissions/         # centralized runtime permission policy
     storage/             # SQLite message history and durable outbound queue
-    transport/           # ChatTransport, BLE transport and TransportManager
+    transport/           # BLE, Android Nearby, contracts and selection manager
   features/
     chat/
-      data/              # runtime ChatSession orchestration
+      data/              # multi-transport ChatSession orchestration
       domain/            # immutable UI/session models
       presentation/      # Riverpod page and testable widgets
     diagnostics/
@@ -41,20 +42,33 @@ lib/
   main.dart
 ```
 
-`BluetoothLowEnergyMeshRadio` simultaneously:
+### BLE path
 
-- advertises the MeshTalk GATT service as a peripheral;
-- scans for the same service as a central;
-- connects to discovered peers and subscribes to notifications;
-- accepts characteristic writes from remote centrals;
-- broadcasts frames through writes and notifications;
-- reports connected peers and negotiated frame limits.
+`BluetoothLowEnergyMeshRadio` simultaneously advertises the MeshTalk GATT service, scans for the same service, connects as a central, accepts writes as a peripheral, sends notifications, and reports negotiated frame limits. `BleTransport` converts message envelopes into compact BLE frames and reassembles inbound chunks.
 
-`BleTransport` remains plugin-independent. It converts message envelopes into compact BLE frames, sends them through `BleMeshRadio`, and reassembles inbound frames.
+### Android Nearby fallback
 
-`ChatSession` owns runtime orchestration. It starts BLE authorization, maps permission/off/unsupported states into actionable UI, loads local history, restores queued outbound envelopes, marks local IDs as seen, applies relay TTL/dedup decisions, and retries pending messages when a peer appears.
+`AndroidNearbyTransport` uses the plugin-neutral `NearbyConnectionsGateway` contract. Its production gateway wraps Android Nearby Connections with the P2P cluster strategy.
 
-`SqliteMessageStore` persists the encoded transport envelope together with room, sender label, direction, and delivery state. Writes use message ID as the primary key so retries and duplicate inbound events remain idempotent.
+The transport:
+
+- starts advertising and discovery only after version-appropriate runtime permission checks;
+- advertises a stable MeshTalk endpoint identity containing the local device ID and sanitized display name;
+- ignores malformed and self-identifying endpoints;
+- uses lexical device-ID ordering so only one side initiates a discovered connection;
+- accepts byte payloads and decodes them through the existing `MessageCodec`;
+- broadcasts an envelope to every connected fallback peer;
+- treats delivery as successful when at least one connected endpoint accepts the bytes;
+- removes failed endpoints without discarding successful deliveries;
+- limits encoded byte payloads to a conservative 32 KiB.
+
+This adapter is Android-only. It is not presented as iOS Multipeer Connectivity support.
+
+### Shared session and storage
+
+`ChatSession` subscribes to peer and incoming-message streams from every registered transport. Whichever transport is active supplies the visible peer list, while all received envelopes pass through the same relay, TTL, deduplication, SQLite, and delivery-status pipeline.
+
+`SqliteMessageStore` persists the encoded transport envelope together with room, sender label, direction, and delivery state. Message ID is the primary key, so retries and duplicate inbound events remain idempotent.
 
 ## Local profile
 
@@ -63,16 +77,16 @@ On first launch, MeshTalk generates and persists:
 - a UUID device ID;
 - a short display name derived from that ID.
 
-The user can edit the display name from the profile dialog. Saving a new name recreates the BLE session so the updated identity is advertised immediately. Profile values are stored locally with `shared_preferences`; no account, server, phone number, contacts access, or cloud profile is required.
+The user can edit the display name from the profile dialog. Saving a new name stops the previous session before recreating BLE and Android Nearby advertising. Profile values remain local in `shared_preferences`; no account, phone number, contacts access, or cloud profile is required.
 
 ## Durable history and queue recovery
 
 - Incoming, queued, and sent messages are stored in SQLite.
-- Room history is loaded in timestamp order when the app starts.
-- Outgoing messages are written as queued before the transport attempts delivery.
+- Room history loads in timestamp order when the app starts.
+- Outgoing messages are written as queued before transport delivery.
 - Only successful transport sends change an outgoing message to sent.
-- Queued envelopes are restored after process restart and retried when a peer connects.
-- Message IDs deduplicate restored queue entries and radio echoes.
+- Queued envelopes survive process restart and retry when the active transport gains a peer.
+- Message IDs deduplicate restored queue entries, BLE echoes, and cross-transport duplicates.
 
 The database currently uses schema version 1. Future schema changes must add explicit migrations and preserve existing history.
 
@@ -87,7 +101,7 @@ The database currently uses schema version 1. Future schema changes must add exp
    bash tool/configure_android_project.sh
    ```
 
-4. For iOS, add these Bluetooth usage descriptions to `ios/Runner/Info.plist` before running on a device:
+4. For iOS BLE, add these descriptions to `ios/Runner/Info.plist`:
 
    ```xml
    <key>NSBluetoothAlwaysUsageDescription</key>
@@ -95,6 +109,8 @@ The database currently uses schema version 1. Future schema changes must add exp
    <key>NSBluetoothPeripheralUsageDescription</key>
    <string>MeshTalk advertises a local Bluetooth service for offline nearby chat.</string>
    ```
+
+   A future iOS local-network fallback will also require local-network and Bonjour declarations. Those are intentionally not claimed or configured yet.
 
 5. Install dependencies and run checks:
 
@@ -104,52 +120,63 @@ The database currently uses schema version 1. Future schema changes must add exp
    flutter test
    ```
 
-6. Run the app on physical Android and iOS devices. BLE central/peripheral behavior cannot be validated reliably on simulators.
+6. Run the app on physical devices. BLE central/peripheral and Android Nearby behavior cannot be validated reliably on simulators.
 
 ## Runtime states
 
-The chat screen distinguishes these states instead of showing a generic failure:
+The chat screen distinguishes:
 
 - Bluetooth permission denied — opens app settings;
-- Bluetooth off — asks the user to enable Bluetooth and retry;
-- required BLE roles unsupported — explains the hardware limitation;
-- scanning — messages can be queued while MeshTalk searches for peers;
-- connected — shows the live nearby-peer count;
-- initialization or transport error — offers a retry action.
+- Android Nearby/local-network permission denied — opens app settings;
+- Bluetooth off with fallback available — starts Android Nearby discovery;
+- Bluetooth off with no fallback — shows an actionable unavailable state;
+- required BLE roles unsupported — explains the limitation when no fallback activates;
+- scanning — messages remain queueable while the selected transport searches;
+- connected over BLE — shows BLE peer count;
+- connected over Android Nearby — labels the fallback and displays an unauthenticated-peer warning;
+- initialization or transport error — offers retry.
 
-## Android BLE configuration
+## Android configuration
 
-`tool/configure_android_project.sh` makes the generated Android project compatible with the BLE adapter:
+`tool/configure_android_project.sh`:
 
-- sets `minSdk` to API 24, as required by `bluetooth_low_energy`;
-- declares `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT`, and `BLUETOOTH_ADVERTISE`;
-- keeps legacy Bluetooth and foreground location permissions limited to Android 11 and older;
-- does not request background or always-on location.
+- sets `minSdk` to API 24, as required by the BLE adapter;
+- declares Wi-Fi state permissions required by Nearby Connections;
+- declares modern Bluetooth scan, connect, and advertise permissions;
+- declares Nearby Wi-Fi and local-network permissions for newer Android versions;
+- bounds legacy Bluetooth and location declarations to older Android versions;
+- does not request file storage, contacts, SMS, camera, background location, or always-on location.
+
+Only byte payloads are used by the fallback, so file-storage permission is unnecessary.
 
 ## Android APK artifacts
 
-The `Android APK` GitHub Actions workflow runs for Android-relevant pull requests, pushes to `main`, and manual workflow dispatches. It generates the Android scaffold when needed, applies BLE configuration, builds a release APK, creates a SHA-256 checksum, and uploads the artifact for 14 days.
+The `Android APK` GitHub Actions workflow runs for Android-relevant pull requests, pushes to `main`, and manual dispatches. It generates the Android scaffold when needed, applies Android transport configuration, builds a release APK, creates a SHA-256 checksum, and uploads the artifact for 14 days.
 
-The generated APK uses the default Flutter development signing configuration and is intended for internal installation and testing only. A Play Store build requires maintainer-approved release signing secrets and an Android App Bundle workflow.
+The APK uses Flutter’s development signing configuration and is for internal installation and testing only. A Play Store build requires maintainer-approved release signing secrets and an Android App Bundle workflow.
 
 ## Dependency notes
 
-- `bluetooth_low_energy` 6.2.1 is used because MeshTalk requires both BLE central and peripheral roles on Android and iOS.
-- `shared_preferences` 2.5.3 stores non-sensitive profile preferences while retaining Dart 3.6 compatibility.
-- `sqflite` 2.4.1 stores message history on Android and iOS while retaining Dart 3.6 compatibility. Newer releases require a newer Dart baseline.
-- `sqflite_common_ffi` is a test-only dependency used to exercise the real SQLite schema in memory.
-- `nearby_connections` 4.3.0 exposes Android Nearby Connections, not iOS Multipeer Connectivity. A separate iOS adapter is required for equivalent fallback behavior.
-- Permissions remain limited to Bluetooth scan/connect/advertise, foreground location where required for legacy discovery, local-network access, and notifications.
+- `bluetooth_low_energy` 6.2.1 provides BLE central and peripheral roles on Android and iOS.
+- `nearby_connections` 4.3.0 provides Android Nearby Connections only.
+- `device_info_plus` is pinned to 11.4.0 to retain the project’s Dart 3.6 baseline while selecting version-specific Android permissions.
+- `shared_preferences` 2.5.3 stores non-sensitive profile preferences.
+- `sqflite` 2.4.1 stores message history while retaining Dart 3.6 compatibility.
+- `sqflite_common_ffi` is test-only and exercises the real SQLite schema in memory.
 
 ## Known limitations
 
 - Message-level end-to-end encryption is not implemented.
-- The BLE adapter is foreground-first. Background advertising, restoration, and long-lived background connections require platform-specific lifecycle work and real-device validation.
-- Symmetric phone-to-phone discovery may create more than one logical path between two devices. Message IDs and deduplication remain authoritative.
+- Android Nearby peer identity is not cryptographically authenticated or user-confirmed yet.
+- Android Nearby activates when BLE is unavailable; it does not currently start merely because BLE has zero connected peers.
+- The Android fallback depends on Google Play services Nearby and requires real-device interoperability testing across Android versions and vendors.
+- An equivalent iOS local-network fallback is not implemented.
+- BLE and Android Nearby are foreground-first; background restoration requires platform-specific lifecycle work.
+- Symmetric BLE discovery can create more than one logical path. Message IDs and deduplication remain authoritative.
 - The compact BLE frame format supports at most 255 chunks per message.
-- Local Wi-Fi and internet fallback transports are not implemented yet.
-- History has no retention, export, or delete controls yet.
-- Real-device verification on at least two phones is required before this transport is considered release-ready.
+- Internet relay is not implemented.
+- History has no retention, export, or delete controls.
+- Real-device verification on at least two phones is required before either nearby transport is considered release-ready.
 
 ## Development process
 
@@ -158,6 +185,6 @@ The generated APK uses the default Flutter development signing configuration and
 - Every user-facing change updates `CHANGELOG.md`.
 - Every core/domain feature requires tests.
 - Storage schema changes require migration tests.
-- Real-device changes to `core/ble/` require the manual checklist in `docs/manual-test-checklist.md`.
+- Real-device transport changes require the checklist in `docs/manual-test-checklist.md`.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for branch, PR, testing, and release rules.
