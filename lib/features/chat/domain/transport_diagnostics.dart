@@ -41,14 +41,16 @@ class TransportDiagnosticsSnapshot {
       bluetoothAvailability:
           bluetoothAvailability ?? this.bluetoothAvailability,
       refreshedAtUtc: refreshedAtUtc ?? this.refreshedAtUtc,
-      activeTransportId:
-          clearActiveTransport ? null : activeTransportId ?? this.activeTransportId,
+      activeTransportId: clearActiveTransport
+          ? null
+          : activeTransportId ?? this.activeTransportId,
       activeTransportKind: clearActiveTransport
           ? null
           : activeTransportKind ?? this.activeTransportKind,
       activeTransportMaxPayloadBytes: clearActiveTransport
           ? null
-          : activeTransportMaxPayloadBytes ?? this.activeTransportMaxPayloadBytes,
+          : activeTransportMaxPayloadBytes ??
+              this.activeTransportMaxPayloadBytes,
       lastError: clearLastError ? null : lastError ?? this.lastError,
     );
   }
