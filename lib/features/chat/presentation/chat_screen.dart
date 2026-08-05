@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:meshtalk_app/core/security/message_protector.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
 import 'package:meshtalk_app/core/transport/peer_verification.dart';
 import 'package:meshtalk_app/features/chat/domain/chat_session_state.dart';
 import 'package:meshtalk_app/features/chat/presentation/profile_dialog.dart';
+import 'package:meshtalk_app/features/chat/presentation/secure_room_dialog.dart';
 import 'package:meshtalk_app/features/chat/presentation/transport_diagnostics_dialog.dart';
 
 typedef SendMessage = Future<void> Function(String text);
@@ -21,6 +23,9 @@ class ChatScreen extends StatefulWidget {
     required this.onUpdateDisplayName,
     required this.onApprovePeer,
     required this.onRejectPeer,
+    required this.onExportRoomCode,
+    required this.onCreateRoom,
+    required this.onJoinRoom,
     super.key,
   });
 
@@ -31,6 +36,9 @@ class ChatScreen extends StatefulWidget {
   final UpdateDisplayName onUpdateDisplayName;
   final PeerVerificationAction onApprovePeer;
   final PeerVerificationAction onRejectPeer;
+  final ExportSecureRoomCode onExportRoomCode;
+  final CreateSecureRoom onCreateRoom;
+  final JoinSecureRoom onJoinRoom;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -73,6 +81,12 @@ class _ChatScreenState extends State<ChatScreen> {
         title: const Text('MeshTalk'),
         actions: <Widget>[
           IconButton(
+            key: const ValueKey<String>('secure-room-button'),
+            onPressed: _showSecureRoom,
+            tooltip: 'Encrypted room',
+            icon: const Icon(Icons.lock_outline),
+          ),
+          IconButton(
             key: const ValueKey<String>('diagnostics-button'),
             onPressed: _showDiagnostics,
             tooltip: 'Transport diagnostics',
@@ -100,7 +114,7 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: <Widget>[
-          const _SecurityNotice(),
+          _SecurityNotice(state: widget.state),
           _ConnectionCard(
             state: widget.state,
             onRetry: widget.onRetry,
@@ -119,7 +133,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: Padding(
                       padding: EdgeInsets.all(24),
                       child: Text(
-                        'Nearby messages will appear here. Messages sent while scanning remain queued until a peer connects.',
+                        'Encrypted nearby messages will appear here. Messages sent while scanning remain queued until a peer connects.',
                         textAlign: TextAlign.center,
                       ),
                     ),
@@ -149,7 +163,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       enabled: widget.state.canSend && !_sending,
                       decoration: InputDecoration(
                         hintText: widget.state.canSend
-                            ? 'Message nearby peers'
+                            ? 'Message encrypted room peers'
                             : 'Nearby chat unavailable',
                         border: const OutlineInputBorder(),
                       ),
@@ -201,6 +215,18 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _showSecureRoom() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => SecureRoomDialog(
+        room: widget.state.secureRoom,
+        onExportCode: widget.onExportRoomCode,
+        onCreateRoom: widget.onCreateRoom,
+        onJoinRoom: widget.onJoinRoom,
+      ),
+    );
+  }
+
   Future<void> _showDiagnostics() async {
     await showDialog<void>(
       context: context,
@@ -213,20 +239,38 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 class _SecurityNotice extends StatelessWidget {
-  const _SecurityNotice();
+  const _SecurityNotice({required this.state});
+
+  final ChatSessionState state;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      color: Theme.of(context).colorScheme.errorContainer,
-      child: Text(
-        'Not end-to-end encrypted yet. Do not send sensitive information.',
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: Theme.of(context).colorScheme.onErrorContainer,
-        ),
+      color: Theme.of(context).colorScheme.primaryContainer,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          Icon(
+            Icons.lock,
+            size: 16,
+            color: Theme.of(context).colorScheme.onPrimaryContainer,
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              '${state.secureRoom.name} · ${state.secureRoom.fingerprint} · End-to-end encrypted',
+              key: const ValueKey<String>('e2ee-room-notice'),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onPrimaryContainer,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -282,11 +326,11 @@ class _ConnectionCard extends StatelessWidget {
                     Text(state.statusMessage),
                     if (state.activeTransportKind == TransportKind.localWifi &&
                         state.status == ChatConnectionStatus.connected)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 4),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
                         child: Text(
-                          'Peer verified using the matching Nearby code.',
-                          key: ValueKey<String>('nearby-verified-label'),
+                          'Peer verified using the matching ${_localTransportName(state)} code.',
+                          key: const ValueKey<String>('nearby-verified-label'),
                         ),
                       ),
                     if (state.pendingCount > 0) ...<Widget>[
@@ -329,7 +373,7 @@ class _ConnectionCard extends StatelessWidget {
 
   String _statusTitle(ChatSessionState state) {
     return switch (state.status) {
-      ChatConnectionStatus.initializing => 'Starting nearby chat',
+      ChatConnectionStatus.initializing => 'Starting encrypted nearby chat',
       ChatConnectionStatus.permissionDenied => 'Bluetooth permission denied',
       ChatConnectionStatus.localNetworkPermissionDenied =>
         'Nearby permission denied',
@@ -338,13 +382,21 @@ class _ConnectionCard extends StatelessWidget {
       ChatConnectionStatus.scanning => state.verificationRequests.isNotEmpty
           ? 'Verify Nearby peer'
           : state.activeTransportKind == TransportKind.localWifi
-              ? 'Searching with Android Nearby'
+              ? 'Searching with ${_localTransportName(state)}'
               : 'Searching nearby over BLE',
       ChatConnectionStatus.connected =>
         state.activeTransportKind == TransportKind.localWifi
-            ? 'Verified Android Nearby connection'
+            ? 'Verified ${_localTransportName(state)} connection'
             : 'Nearby BLE connected',
       ChatConnectionStatus.error => 'Nearby chat error',
+    };
+  }
+
+  String _localTransportName(ChatSessionState state) {
+    return switch (state.diagnostics?.activeTransportId) {
+      'android-nearby' => 'Android Nearby',
+      'ios-multipeer' => 'iOS Multipeer',
+      _ => 'local-network',
     };
   }
 }
@@ -471,6 +523,7 @@ class _MessageTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final outgoing = message.direction == ChatMessageDirection.outgoing;
+    final protection = _protectionLabel(message.protectionStatus);
     return Align(
       alignment: outgoing ? Alignment.centerRight : Alignment.centerLeft,
       child: ConstrainedBox(
@@ -492,6 +545,19 @@ class _MessageTile extends StatelessWidget {
                   '${message.senderLabel} · ${_timeLabel(message.timestampUtc)} · ${_deliveryLabel(message.deliveryStatus)}',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
+                const SizedBox(height: 2),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Icon(protection.$1, size: 13),
+                    const SizedBox(width: 3),
+                    Text(
+                      protection.$2,
+                      key: ValueKey<String>('message-protection-${message.id}'),
+                      style: Theme.of(context).textTheme.labelSmall,
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -512,6 +578,23 @@ class _MessageTile extends StatelessWidget {
       ChatDeliveryStatus.queued => 'queued',
       ChatDeliveryStatus.sent => 'sent',
       ChatDeliveryStatus.received => 'received',
+    };
+  }
+
+  (IconData, String) _protectionLabel(MessageProtectionStatus status) {
+    return switch (status) {
+      MessageProtectionStatus.endToEndEncrypted => (
+          Icons.lock,
+          'end-to-end encrypted',
+        ),
+      MessageProtectionStatus.legacyUnencrypted => (
+          Icons.warning_amber,
+          'legacy unencrypted history',
+        ),
+      MessageProtectionStatus.unableToDecrypt => (
+          Icons.lock_reset,
+          'unable to authenticate',
+        ),
     };
   }
 }
