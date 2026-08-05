@@ -52,8 +52,7 @@ void main() {
     expect((await joiner.loadActive())?.id, created.id);
   });
 
-  test('re-importing the same room activates without duplicating it',
-      () async {
+  test('re-importing the same room activates without duplicating it', () async {
     final store = SecureRoomStore(
       values: MemorySecureValueStore(),
       random: Random(15),
