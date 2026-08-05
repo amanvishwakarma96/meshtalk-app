@@ -262,8 +262,7 @@ class FakeIosMultipeerGateway implements IosMultipeerGateway {
   final List<String> approvedEndpointIds = <String>[];
   final List<String> rejectedEndpointIds = <String>[];
   final Set<String> failedSendEndpointIds = <String>{};
-  final Map<String, List<Uint8List>> sentPayloads =
-      <String, List<Uint8List>>{};
+  final Map<String, List<Uint8List>> sentPayloads = <String, List<Uint8List>>{};
 
   @override
   bool get isSupported => supported;
