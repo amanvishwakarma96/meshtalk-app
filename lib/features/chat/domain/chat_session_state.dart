@@ -1,4 +1,6 @@
 import 'package:meshtalk_app/core/profile/local_profile.dart';
+import 'package:meshtalk_app/core/security/message_protector.dart';
+import 'package:meshtalk_app/core/security/secure_room.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
 import 'package:meshtalk_app/core/transport/peer_verification.dart';
 import 'package:meshtalk_app/features/chat/domain/transport_diagnostics.dart';
@@ -33,6 +35,7 @@ class ChatTimelineMessage {
     required this.timestampUtc,
     required this.direction,
     required this.deliveryStatus,
+    required this.protectionStatus,
   });
 
   final String id;
@@ -41,6 +44,7 @@ class ChatTimelineMessage {
   final DateTime timestampUtc;
   final ChatMessageDirection direction;
   final ChatDeliveryStatus deliveryStatus;
+  final MessageProtectionStatus protectionStatus;
 
   ChatTimelineMessage copyWith({ChatDeliveryStatus? deliveryStatus}) {
     return ChatTimelineMessage(
@@ -52,6 +56,7 @@ class ChatTimelineMessage {
       deliveryStatus: direction == ChatMessageDirection.incoming
           ? this.deliveryStatus
           : deliveryStatus ?? this.deliveryStatus,
+      protectionStatus: protectionStatus,
     );
   }
 }
@@ -59,6 +64,7 @@ class ChatTimelineMessage {
 class ChatSessionState {
   const ChatSessionState({
     required this.profile,
+    required this.secureRoom,
     required this.status,
     required this.statusMessage,
     required this.messages,
@@ -69,11 +75,15 @@ class ChatSessionState {
     this.diagnostics,
   });
 
-  factory ChatSessionState.initial(LocalProfile profile) {
+  factory ChatSessionState.initial(
+    LocalProfile profile,
+    SecureRoomSummary secureRoom,
+  ) {
     return ChatSessionState(
       profile: profile,
+      secureRoom: secureRoom,
       status: ChatConnectionStatus.initializing,
-      statusMessage: 'Preparing nearby chat…',
+      statusMessage: 'Preparing encrypted nearby chat…',
       messages: const <ChatTimelineMessage>[],
       peers: const <NearbyPeer>[],
       pendingCount: 0,
@@ -81,6 +91,7 @@ class ChatSessionState {
   }
 
   final LocalProfile profile;
+  final SecureRoomSummary secureRoom;
   final ChatConnectionStatus status;
   final String statusMessage;
   final List<ChatTimelineMessage> messages;
@@ -104,6 +115,7 @@ class ChatSessionState {
 
   ChatSessionState copyWith({
     LocalProfile? profile,
+    SecureRoomSummary? secureRoom,
     ChatConnectionStatus? status,
     String? statusMessage,
     List<ChatTimelineMessage>? messages,
@@ -116,6 +128,7 @@ class ChatSessionState {
   }) {
     return ChatSessionState(
       profile: profile ?? this.profile,
+      secureRoom: secureRoom ?? this.secureRoom,
       status: status ?? this.status,
       statusMessage: statusMessage ?? this.statusMessage,
       messages: messages ?? this.messages,
