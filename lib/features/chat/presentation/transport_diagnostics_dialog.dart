@@ -61,6 +61,7 @@ class _TransportDiagnosticsDialogState
               value: _transportLabel(
                 diagnostics?.activeTransportKind ??
                     widget.state.activeTransportKind,
+                diagnostics?.activeTransportId,
               ),
             ),
             _DiagnosticRow(
@@ -131,7 +132,7 @@ class _TransportDiagnosticsDialogState
       ChatConnectionStatus.initializing => 'Initializing',
       ChatConnectionStatus.permissionDenied => 'Bluetooth permission denied',
       ChatConnectionStatus.localNetworkPermissionDenied =>
-        'Nearby permission denied',
+        'Local-network permission denied',
       ChatConnectionStatus.bluetoothOff => 'Bluetooth off',
       ChatConnectionStatus.unsupported => 'Unsupported',
       ChatConnectionStatus.scanning => 'Searching',
@@ -140,10 +141,14 @@ class _TransportDiagnosticsDialogState
     };
   }
 
-  String _transportLabel(TransportKind? kind) {
+  String _transportLabel(TransportKind? kind, String? transportId) {
     return switch (kind) {
       TransportKind.bleMesh => 'Bluetooth LE mesh',
-      TransportKind.localWifi => 'Android Nearby Connections',
+      TransportKind.localWifi => switch (transportId) {
+          'android-nearby' => 'Android Nearby Connections',
+          'ios-multipeer' => 'iOS Multipeer Connectivity',
+          _ => 'Local-network fallback',
+        },
       TransportKind.internetRelay => 'Internet relay',
       null => 'None',
     };
