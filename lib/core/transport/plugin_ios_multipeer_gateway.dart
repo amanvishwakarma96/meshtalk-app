@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:meshtalk_app/core/transport/ios_multipeer_gateway.dart';
 import 'package:meshtalk_multipeer/meshtalk_multipeer.dart';
@@ -45,7 +46,7 @@ class PluginIosMultipeerGateway implements IosMultipeerGateway {
   @override
   Future<void> sendBytes({
     required String endpointId,
-    required bytes,
+    required Uint8List bytes,
   }) {
     return _plugin.sendBytes(endpointId: endpointId, bytes: bytes);
   }
