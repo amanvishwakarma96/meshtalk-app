@@ -288,6 +288,7 @@ class AndroidNearbyTransport
     _knownEndpoints.remove(endpointId);
     if (verificationRemoved) {
       _publishVerificationRequests();
+      unawaited(_rejectEndpointBestEffort(endpointId));
     }
   }
 
@@ -338,9 +339,7 @@ class AndroidNearbyTransport
         !_knownEndpoints.containsKey(endpointId)) {
       _connectedEndpointIds.remove(endpointId);
       _acceptedEndpointIds.remove(endpointId);
-      if (result != NearbyConnectionResult.connected) {
-        _knownEndpoints.remove(endpointId);
-      }
+      _knownEndpoints.remove(endpointId);
       if (verificationRemoved) {
         _publishVerificationRequests();
       }
@@ -398,6 +397,7 @@ class AndroidNearbyTransport
         _acceptedEndpointIds.remove(endpointId);
         _knownEndpoints.remove(endpointId);
         await _rejectEndpointBestEffort(endpointId);
+        throw StateError('Android Nearby did not accept the verified peer.');
       }
     } catch (_) {
       _pendingEndpointIds.remove(endpointId);

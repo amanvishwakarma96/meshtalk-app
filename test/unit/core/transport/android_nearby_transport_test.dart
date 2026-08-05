@@ -150,6 +150,29 @@ void main() {
     expect(transport.currentVerificationRequests, isEmpty);
   });
 
+  test('surfaces a platform failure after the user approves a peer', () async {
+    await transport.connect();
+    gateway.acceptResult = false;
+    await _initiatePeer(
+      transport,
+      gateway,
+      identityCodec,
+      endpointId: 'endpoint-failed-accept',
+      deviceId: '22222222-2222-2222-2222-222222222222',
+    );
+
+    await expectLater(
+      transport.approvePeer('endpoint-failed-accept'),
+      throwsStateError,
+    );
+
+    expect(
+      gateway.rejectedEndpointIds,
+      contains('endpoint-failed-accept'),
+    );
+    expect(transport.currentVerificationRequests, isEmpty);
+  });
+
   test('rejects and cleans up a user-declined verification request', () async {
     await transport.connect();
     await _initiatePeer(
