@@ -10,7 +10,10 @@ import 'package:meshtalk_app/core/storage/sqlite_message_store.dart';
 import 'package:meshtalk_app/core/transport/android_nearby_transport.dart';
 import 'package:meshtalk_app/core/transport/ble_transport.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
+import 'package:meshtalk_app/core/transport/ios_multipeer_gateway.dart';
+import 'package:meshtalk_app/core/transport/ios_multipeer_transport.dart';
 import 'package:meshtalk_app/core/transport/nearby_connections_gateway.dart';
+import 'package:meshtalk_app/core/transport/plugin_ios_multipeer_gateway.dart';
 import 'package:meshtalk_app/core/transport/plugin_nearby_connections_gateway.dart';
 import 'package:meshtalk_app/core/transport/transport_manager.dart';
 import 'package:meshtalk_app/features/chat/data/chat_session.dart';
@@ -48,17 +51,30 @@ final nearbyConnectionsGatewayProvider = Provider<NearbyConnectionsGateway>(
   (ref) => PluginNearbyConnectionsGateway(),
 );
 
+final iosMultipeerGatewayProvider = Provider<IosMultipeerGateway>(
+  (ref) => PluginIosMultipeerGateway(),
+);
+
 final chatSessionProvider = FutureProvider<ChatSession>((ref) async {
   final profile = await ref.watch(localProfileProvider.future);
   final radio = ref.watch(bleRadioFactoryProvider)(profile);
   final bleTransport = BleTransport(radio: radio);
   final nearbyGateway = ref.watch(nearbyConnectionsGatewayProvider);
+  final iosMultipeerGateway = ref.watch(iosMultipeerGatewayProvider);
   final transports = <ChatTransport>[bleTransport];
   if (nearbyGateway.isSupported) {
     transports.add(
       AndroidNearbyTransport(
         profile: profile,
         gateway: nearbyGateway,
+      ),
+    );
+  }
+  if (iosMultipeerGateway.isSupported) {
+    transports.add(
+      IosMultipeerTransport(
+        profile: profile,
+        gateway: iosMultipeerGateway,
       ),
     );
   }
