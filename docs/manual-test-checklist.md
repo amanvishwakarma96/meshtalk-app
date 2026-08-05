@@ -1,13 +1,13 @@
 # Manual two-device verification
 
-Run this checklist on physical phones before every release and after changes to BLE, Android Nearby, transport selection, profile, or storage behavior.
+Run this checklist on physical phones before every release and after changes to BLE, Android Nearby, transport selection, verification, profile, diagnostics, lifecycle, or storage behavior.
 
 ## Setup
 
 - [ ] Fresh install on both devices.
 - [ ] Record OS version, phone model, Google Play services version, app version, and build number.
 - [ ] Grant only the permissions required by each tested path.
-- [ ] Confirm the visible security warning remains present.
+- [ ] Confirm the visible not-end-to-end-encrypted warning remains present.
 
 ## BLE mesh
 
@@ -28,9 +28,15 @@ Run this checklist on physical phones before every release and after changes to 
 - [ ] Exactly one side initiates a discovered connection; duplicate cross-requests do not occur.
 - [ ] Malformed or non-MeshTalk endpoint names are not accepted.
 - [ ] Self-identifying endpoints are ignored.
-- [ ] The UI labels the active transport as Android Nearby and states that peer identity is not authenticated.
-- [ ] A message sends and arrives exactly once in each direction.
-- [ ] A message is broadcast to every connected fallback peer.
+- [ ] Empty authentication tokens are rejected.
+- [ ] The same authentication code appears on both phones before either side accepts.
+- [ ] No connected peer or inbound payload appears before both users approve matching codes.
+- [ ] Approving matching codes connects the peer and changes the UI to verified Android Nearby.
+- [ ] Rejecting on either phone removes the pending request and does not connect.
+- [ ] Repeated connection callbacks do not create duplicate verification cards.
+- [ ] A stale verification card cannot accept a disconnected endpoint.
+- [ ] A message sends and arrives exactly once in each direction after verification.
+- [ ] A message is broadcast to every connected verified fallback peer.
 - [ ] One failed endpoint does not invalidate successful delivery to another endpoint.
 - [ ] When every endpoint fails, the message remains queued.
 - [ ] Encoded payloads above 32 KiB are rejected without corrupting the session.
@@ -38,6 +44,18 @@ Run this checklist on physical phones before every release and after changes to 
 - [ ] Turning BLE back on upgrades to BLE only after BLE activation succeeds.
 - [ ] A failed BLE upgrade leaves the working Android Nearby session active.
 - [ ] Android Nearby is not shown or claimed on iOS.
+
+## Transport diagnostics
+
+- [ ] The diagnostics button opens from the chat app bar.
+- [ ] Session state matches the visible connection card.
+- [ ] Active transport and transport ID match BLE or Android Nearby.
+- [ ] Bluetooth readiness matches the device radio state.
+- [ ] Connected-peer, pending-verification, and queued-message counts are accurate.
+- [ ] Payload limit reflects the active transport.
+- [ ] Last refresh time changes after pressing Refresh.
+- [ ] A forced transport failure appears as the last transport error.
+- [ ] Diagnostics contain no message payload, authentication token, or personal data beyond the local transport state.
 
 ## Persistent history and recovery
 
@@ -58,13 +76,16 @@ Run this checklist on physical phones before every release and after changes to 
 - [ ] Display names shorter than 2 or longer than 24 characters are rejected.
 - [ ] Editing the display name does not change the device ID or delete history.
 
-## Permission and radio states
+## Permission, lifecycle, and radio states
 
 - [ ] Bluetooth permission denied shows an actionable explanation and settings link.
 - [ ] Android Nearby/local-network permission denied shows an actionable explanation and settings link.
 - [ ] Bluetooth off and Android fallback available starts Nearby discovery.
 - [ ] Bluetooth off and no fallback shows a precise no-transport state.
 - [ ] Turning Bluetooth on mid-session upgrades without losing queued messages.
+- [ ] Returning from app settings refreshes permissions and transport availability.
+- [ ] Rapid resume and radio callbacks do not start competing transport switches.
+- [ ] Foreground resume preserves a working fallback when a higher-priority transport still cannot activate.
 
 ## Reliability
 
@@ -72,10 +93,11 @@ Run this checklist on physical phones before every release and after changes to 
 - [ ] Incomplete BLE chunk assemblies expire and release memory.
 - [ ] BLE MTU changes do not corrupt subsequent messages.
 - [ ] Relay success does not change an incoming message label from received to sent.
-- [ ] Repeated Android Nearby start/stop cycles do not leave stale endpoints.
+- [ ] Repeated Android Nearby start/stop cycles do not leave stale endpoints or verification requests.
 
 ## Security copy
 
-- [ ] Android Nearby is explicitly labelled unverified until authentication-token confirmation is implemented.
+- [ ] Android Nearby explains that users must compare the same authentication code on both phones.
+- [ ] A verified platform connection is not described as end-to-end encryption or verified real-world identity.
 - [ ] The app clearly states when an internet relay is in use once implemented.
 - [ ] The not-end-to-end-encrypted warning remains visible until E2E ships.

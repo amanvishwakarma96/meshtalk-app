@@ -8,6 +8,7 @@ import 'package:meshtalk_app/core/transport/android_nearby_transport.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
 import 'package:meshtalk_app/core/transport/nearby_connections_gateway.dart';
 import 'package:meshtalk_app/core/transport/nearby_endpoint_identity.dart';
+import 'package:meshtalk_app/core/transport/peer_verification.dart';
 
 void main() {
   const localProfile = LocalProfile(
@@ -86,7 +87,7 @@ void main() {
     expect(gateway.requestedEndpointIds, <String>['endpoint-higher']);
   });
 
-  test('rejects malformed peers before accepting payload callbacks', () async {
+  test('rejects malformed peers before publishing verification', () async {
     await transport.connect();
 
     gateway.emitConnectionInitiated(
@@ -101,37 +102,113 @@ void main() {
 
     expect(gateway.rejectedEndpointIds, contains('bad-endpoint'));
     expect(gateway.acceptedEndpointIds, isNot(contains('bad-endpoint')));
+    expect(transport.currentVerificationRequests, isEmpty);
   });
 
-  test('publishes connected peers and decodes incoming byte envelopes',
-      () async {
+  test('rejects a peer when the authentication token is empty', () async {
     await transport.connect();
-    final remoteIdentity = identityCodec.encode(
+    final identity = identityCodec.encode(
       deviceId: '22222222-2222-2222-2222-222222222222',
       displayName: 'Remote Phone',
     );
+
+    gateway.emitConnectionInitiated(
+      'endpoint-empty-token',
+      NearbyConnectionInfo(
+        endpointName: identity,
+        authenticationToken: '   ',
+        isIncomingConnection: true,
+      ),
+    );
+    await _drainEvents();
+
+    expect(gateway.rejectedEndpointIds, contains('endpoint-empty-token'));
+    expect(transport.currentVerificationRequests, isEmpty);
+  });
+
+  test('waits for explicit verification before accepting a connection',
+      () async {
+    await transport.connect();
+
+    final request = await _initiatePeer(
+      transport,
+      gateway,
+      identityCodec,
+      endpointId: 'endpoint-a',
+      deviceId: '22222222-2222-2222-2222-222222222222',
+      authenticationToken: '4721',
+    );
+
+    expect(request.transportId, transport.id);
+    expect(request.authenticationToken, '4721');
+    expect(request.displayName, 'Peer endpoint-a');
+    expect(gateway.acceptedEndpointIds, isEmpty);
+
+    await transport.approvePeer('endpoint-a');
+
+    expect(gateway.acceptedEndpointIds, <String>['endpoint-a']);
+    expect(transport.currentVerificationRequests, isEmpty);
+  });
+
+  test('surfaces a platform failure after the user approves a peer', () async {
+    await transport.connect();
+    gateway.acceptResult = false;
+    await _initiatePeer(
+      transport,
+      gateway,
+      identityCodec,
+      endpointId: 'endpoint-failed-accept',
+      deviceId: '22222222-2222-2222-2222-222222222222',
+    );
+
+    await expectLater(
+      transport.approvePeer('endpoint-failed-accept'),
+      throwsStateError,
+    );
+
+    expect(
+      gateway.rejectedEndpointIds,
+      contains('endpoint-failed-accept'),
+    );
+    expect(transport.currentVerificationRequests, isEmpty);
+  });
+
+  test('rejects and cleans up a user-declined verification request', () async {
+    await transport.connect();
+    await _initiatePeer(
+      transport,
+      gateway,
+      identityCodec,
+      endpointId: 'endpoint-rejected',
+      deviceId: '22222222-2222-2222-2222-222222222222',
+    );
+
+    await transport.rejectPeer('endpoint-rejected');
+
+    expect(gateway.rejectedEndpointIds, contains('endpoint-rejected'));
+    expect(gateway.acceptedEndpointIds, isEmpty);
+    expect(transport.currentVerificationRequests, isEmpty);
+  });
+
+  test('publishes verified peers and decodes incoming byte envelopes',
+      () async {
+    await transport.connect();
     final peerFuture = transport.nearbyPeers.firstWhere(
       (peers) => peers.isNotEmpty,
     );
     final incomingFuture = transport.incomingMessages.first;
 
-    gateway.emitConnectionInitiated(
-      'endpoint-a',
-      NearbyConnectionInfo(
-        endpointName: remoteIdentity,
-        authenticationToken: 'token',
-        isIncomingConnection: true,
-      ),
-    );
-    await _drainEvents();
-    gateway.emitConnectionResult(
-      'endpoint-a',
-      NearbyConnectionResult.connected,
+    await _connectPeer(
+      transport,
+      gateway,
+      identityCodec,
+      endpointId: 'endpoint-a',
+      deviceId: '22222222-2222-2222-2222-222222222222',
     );
 
     final peers = await peerFuture;
     expect(peers.single.id, '22222222-2222-2222-2222-222222222222');
-    expect(peers.single.displayName, 'Remote Phone');
+    expect(peers.single.displayName, 'Peer endpoint-a');
 
     final message = _message('incoming', payloadLength: 4);
     gateway.emitBytes(
@@ -142,16 +219,40 @@ void main() {
     expect((await incomingFuture).id, message.id);
   });
 
-  test('broadcasts to connected peers and tolerates one failed endpoint',
+  test('does not deliver bytes before verification completes', () async {
+    await transport.connect();
+    await _initiatePeer(
+      transport,
+      gateway,
+      identityCodec,
+      endpointId: 'endpoint-a',
+      deviceId: '22222222-2222-2222-2222-222222222222',
+    );
+    final received = <MessageEnvelope>[];
+    final subscription = transport.incomingMessages.listen(received.add);
+
+    gateway.emitBytes(
+      'endpoint-a',
+      messageCodec.encode(_message('blocked', payloadLength: 4)),
+    );
+    await _drainEvents();
+
+    expect(received, isEmpty);
+    await subscription.cancel();
+  });
+
+  test('broadcasts to verified peers and tolerates one failed endpoint',
       () async {
     await transport.connect();
     await _connectPeer(
+      transport,
       gateway,
       identityCodec,
       endpointId: 'endpoint-a',
       deviceId: '22222222-2222-2222-2222-222222222222',
     );
     await _connectPeer(
+      transport,
       gateway,
       identityCodec,
       endpointId: 'endpoint-b',
@@ -166,9 +267,10 @@ void main() {
     expect(gateway.disconnectedEndpointIds, contains('endpoint-b'));
   });
 
-  test('throws when no connected endpoint accepts a send', () async {
+  test('throws when no verified endpoint accepts a send', () async {
     await transport.connect();
     await _connectPeer(
+      transport,
       gateway,
       identityCodec,
       endpointId: 'endpoint-a',
@@ -185,6 +287,7 @@ void main() {
   test('rejects encoded messages above the conservative byte limit', () async {
     await transport.connect();
     await _connectPeer(
+      transport,
       gateway,
       identityCodec,
       endpointId: 'endpoint-a',
@@ -202,23 +305,37 @@ void main() {
     );
   });
 
-  test('stops discovery, advertising, and endpoints on disconnect', () async {
+  test('disconnect clears pending verification and stops the gateway',
+      () async {
     await transport.connect();
+    await _initiatePeer(
+      transport,
+      gateway,
+      identityCodec,
+      endpointId: 'endpoint-pending',
+      deviceId: '22222222-2222-2222-2222-222222222222',
+    );
 
     await transport.disconnect();
 
+    expect(transport.currentVerificationRequests, isEmpty);
     expect(gateway.stopDiscoveryCalls, 1);
     expect(gateway.stopAdvertisingCalls, 1);
     expect(gateway.stopAllEndpointsCalls, 1);
   });
 }
 
-Future<void> _connectPeer(
+Future<PeerVerificationRequest> _initiatePeer(
+  AndroidNearbyTransport transport,
   FakeNearbyConnectionsGateway gateway,
   NearbyEndpointIdentityCodec codec, {
   required String endpointId,
   required String deviceId,
+  String authenticationToken = '8391',
 }) async {
+  final requestFuture = transport.verificationRequests
+      .firstWhere((requests) => requests.isNotEmpty)
+      .then((requests) => requests.single);
   gateway.emitConnectionInitiated(
     endpointId,
     NearbyConnectionInfo(
@@ -226,11 +343,28 @@ Future<void> _connectPeer(
         deviceId: deviceId,
         displayName: 'Peer $endpointId',
       ),
-      authenticationToken: 'token',
+      authenticationToken: authenticationToken,
       isIncomingConnection: true,
     ),
   );
-  await _drainEvents();
+  return requestFuture;
+}
+
+Future<void> _connectPeer(
+  AndroidNearbyTransport transport,
+  FakeNearbyConnectionsGateway gateway,
+  NearbyEndpointIdentityCodec codec, {
+  required String endpointId,
+  required String deviceId,
+}) async {
+  await _initiatePeer(
+    transport,
+    gateway,
+    codec,
+    endpointId: endpointId,
+    deviceId: deviceId,
+  );
+  await transport.approvePeer(endpointId);
   gateway.emitConnectionResult(
     endpointId,
     NearbyConnectionResult.connected,
@@ -283,9 +417,7 @@ class FakeNearbyConnectionsGateway implements NearbyConnectionsGateway {
 
   NearbyConnectionInitiated? _onConnectionInitiated;
   NearbyConnectionResultCallback? _onConnectionResult;
-  NearbyDisconnected? _onDisconnected;
   NearbyEndpointFound? _onEndpointFound;
-  NearbyEndpointLost? _onEndpointLost;
 
   @override
   bool get isSupported => true;
@@ -306,7 +438,6 @@ class FakeNearbyConnectionsGateway implements NearbyConnectionsGateway {
     advertisedServiceId = serviceId;
     _onConnectionInitiated = onConnectionInitiated;
     _onConnectionResult = onConnectionResult;
-    _onDisconnected = onDisconnected;
     return advertisingResult;
   }
 
@@ -320,7 +451,6 @@ class FakeNearbyConnectionsGateway implements NearbyConnectionsGateway {
     startDiscoveryCalls += 1;
     discoveredServiceId = serviceId;
     _onEndpointFound = onEndpointFound;
-    _onEndpointLost = onEndpointLost;
     return discoveryResult;
   }
 
@@ -335,7 +465,6 @@ class FakeNearbyConnectionsGateway implements NearbyConnectionsGateway {
     requestedEndpointIds.add(endpointId);
     _onConnectionInitiated = onConnectionInitiated;
     _onConnectionResult = onConnectionResult;
-    _onDisconnected = onDisconnected;
     return requestResult;
   }
 
@@ -391,10 +520,6 @@ class FakeNearbyConnectionsGateway implements NearbyConnectionsGateway {
     );
   }
 
-  void emitEndpointLost(String endpointId) {
-    _onEndpointLost?.call(endpointId);
-  }
-
   void emitConnectionInitiated(
     String endpointId,
     NearbyConnectionInfo info,
@@ -407,10 +532,6 @@ class FakeNearbyConnectionsGateway implements NearbyConnectionsGateway {
     NearbyConnectionResult result,
   ) {
     _onConnectionResult?.call(endpointId, result);
-  }
-
-  void emitDisconnected(String endpointId) {
-    _onDisconnected?.call(endpointId);
   }
 
   void emitBytes(String endpointId, Uint8List bytes) {
