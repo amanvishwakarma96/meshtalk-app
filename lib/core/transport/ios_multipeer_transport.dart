@@ -37,8 +37,7 @@ class IosMultipeerTransport
       StreamController<MessageEnvelope>.broadcast();
   final StreamController<List<NearbyPeer>> _nearbyPeers =
       StreamController<List<NearbyPeer>>.broadcast();
-  final StreamController<List<PeerVerificationRequest>>
-      _verificationRequests =
+  final StreamController<List<PeerVerificationRequest>> _verificationRequests =
       StreamController<List<PeerVerificationRequest>>.broadcast();
   final StreamController<TransportRuntimeError> _runtimeErrors =
       StreamController<TransportRuntimeError>.broadcast();
