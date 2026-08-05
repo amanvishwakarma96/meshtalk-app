@@ -1,13 +1,43 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:meshtalk_app/app_providers.dart';
 import 'package:meshtalk_app/features/chat/presentation/chat_screen.dart';
 
-class ChatPage extends ConsumerWidget {
+class ChatPage extends ConsumerStatefulWidget {
   const ChatPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ChatPage> createState() => _ChatPageState();
+}
+
+class _ChatPageState extends ConsumerState<ChatPage>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) {
+      return;
+    }
+    ref.read(chatSessionProvider).whenData((session) {
+      unawaited(session.onAppResumed());
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final sessionValue = ref.watch(chatSessionProvider);
     return sessionValue.when(
       loading: () => const Scaffold(
@@ -46,6 +76,8 @@ class ChatPage extends ConsumerWidget {
             onSend: session.send,
             onRetry: session.retry,
             onOpenSettings: session.openSettings,
+            onApprovePeer: session.approvePeer,
+            onRejectPeer: session.rejectPeer,
             onUpdateDisplayName: (displayName) async {
               await ref
                   .read(profileStoreProvider)
