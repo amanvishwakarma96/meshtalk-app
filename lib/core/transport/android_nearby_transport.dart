@@ -314,6 +314,7 @@ class AndroidNearbyTransport
     _knownEndpoints[endpointId] = identity!;
     _pendingEndpointIds.add(endpointId);
     _pendingVerifications[endpointId] = PeerVerificationRequest(
+      transportId: id,
       endpointId: endpointId,
       peerId: identity.deviceId,
       displayName: identity.displayName,
