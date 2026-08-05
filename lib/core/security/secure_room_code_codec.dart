@@ -5,8 +5,8 @@ import 'package:cryptography/cryptography.dart';
 import 'package:meshtalk_app/core/security/secure_room.dart';
 
 class SecureRoomCodeCodec {
-  const SecureRoomCodeCodec({HashAlgorithm? hashAlgorithm})
-      : _hashAlgorithm = hashAlgorithm ?? const Sha256();
+  SecureRoomCodeCodec({HashAlgorithm? hashAlgorithm})
+      : _hashAlgorithm = hashAlgorithm ?? Sha256();
 
   static const String _prefix = 'MT1';
   final HashAlgorithm _hashAlgorithm;
