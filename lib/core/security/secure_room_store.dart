@@ -51,7 +51,9 @@ class SecureRoomStore {
 
   Future<List<SecureRoomSummary>> listRooms() async {
     final state = await _readState();
-    final rooms = state.rooms.map((room) => room.summary).toList(growable: false)
+    final rooms = state.rooms
+        .map((room) => room.summary)
+        .toList(growable: false)
       ..sort((left, right) => right.createdAtUtc.compareTo(left.createdAtUtc));
     return List<SecureRoomSummary>.unmodifiable(rooms);
   }
