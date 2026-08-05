@@ -80,9 +80,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
             onApprovePeer: session.approvePeer,
             onRejectPeer: session.rejectPeer,
             onExportRoomCode: () {
-              return ref
-                  .read(secureRoomStoreProvider)
-                  .exportActiveRoomCode();
+              return ref.read(secureRoomStoreProvider).exportActiveRoomCode();
             },
             onCreateRoom: (name) async {
               await ref.read(secureRoomStoreProvider).createRoom(name);
