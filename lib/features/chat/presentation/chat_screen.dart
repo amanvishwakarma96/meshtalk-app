@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
+import 'package:meshtalk_app/core/transport/peer_verification.dart';
 import 'package:meshtalk_app/features/chat/domain/chat_session_state.dart';
 import 'package:meshtalk_app/features/chat/presentation/profile_dialog.dart';
+import 'package:meshtalk_app/features/chat/presentation/transport_diagnostics_dialog.dart';
 
 typedef SendMessage = Future<void> Function(String text);
 typedef AsyncAction = Future<void> Function();
 typedef UpdateDisplayName = Future<void> Function(String displayName);
+typedef PeerVerificationAction = Future<void> Function(
+  PeerVerificationRequest request,
+);
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -14,6 +19,8 @@ class ChatScreen extends StatefulWidget {
     required this.onRetry,
     required this.onOpenSettings,
     required this.onUpdateDisplayName,
+    required this.onApprovePeer,
+    required this.onRejectPeer,
     super.key,
   });
 
@@ -22,6 +29,8 @@ class ChatScreen extends StatefulWidget {
   final AsyncAction onRetry;
   final AsyncAction onOpenSettings;
   final UpdateDisplayName onUpdateDisplayName;
+  final PeerVerificationAction onApprovePeer;
+  final PeerVerificationAction onRejectPeer;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -58,10 +67,17 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final verificationRequests = widget.state.verificationRequests;
     return Scaffold(
       appBar: AppBar(
         title: const Text('MeshTalk'),
         actions: <Widget>[
+          IconButton(
+            key: const ValueKey<String>('diagnostics-button'),
+            onPressed: _showDiagnostics,
+            tooltip: 'Transport diagnostics',
+            icon: const Icon(Icons.monitor_heart_outlined),
+          ),
           IconButton(
             key: const ValueKey<String>('profile-button'),
             onPressed: _showProfile,
@@ -90,6 +106,13 @@ class _ChatScreenState extends State<ChatScreen> {
             onRetry: widget.onRetry,
             onOpenSettings: widget.onOpenSettings,
           ),
+          if (verificationRequests.isNotEmpty)
+            _PeerVerificationCard(
+              request: verificationRequests.first,
+              additionalRequestCount: verificationRequests.length - 1,
+              onApprove: widget.onApprovePeer,
+              onReject: widget.onRejectPeer,
+            ),
           Expanded(
             child: widget.state.messages.isEmpty
                 ? const Center(
@@ -177,6 +200,16 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     }
   }
+
+  Future<void> _showDiagnostics() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => TransportDiagnosticsDialog(
+        state: widget.state,
+        onRefresh: widget.onRetry,
+      ),
+    );
+  }
 }
 
 class _SecurityNotice extends StatelessWidget {
@@ -247,12 +280,13 @@ class _ConnectionCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(state.statusMessage),
-                    if (state.activeTransportKind == TransportKind.localWifi)
+                    if (state.activeTransportKind == TransportKind.localWifi &&
+                        state.status == ChatConnectionStatus.connected)
                       const Padding(
                         padding: EdgeInsets.only(top: 4),
                         child: Text(
-                          'Peer identity is not authenticated yet.',
-                          key: ValueKey<String>('nearby-auth-warning'),
+                          'Peer verified using the matching Nearby code.',
+                          key: ValueKey<String>('nearby-verified-label'),
                         ),
                       ),
                     if (state.pendingCount > 0) ...<Widget>[
@@ -281,12 +315,14 @@ class _ConnectionCard extends StatelessWidget {
       ChatConnectionStatus.bluetoothOff => Icons.bluetooth_disabled,
       ChatConnectionStatus.unsupported => Icons.phonelink_erase,
       ChatConnectionStatus.scanning =>
-        state.activeTransportKind == TransportKind.localWifi
-            ? Icons.wifi_find
-            : Icons.bluetooth_searching,
+        state.verificationRequests.isNotEmpty
+            ? Icons.verified_user_outlined
+            : state.activeTransportKind == TransportKind.localWifi
+                ? Icons.wifi_find
+                : Icons.bluetooth_searching,
       ChatConnectionStatus.connected =>
         state.activeTransportKind == TransportKind.localWifi
-            ? Icons.wifi
+            ? Icons.verified_user
             : Icons.bluetooth_connected,
       ChatConnectionStatus.error => Icons.error_outline,
     };
@@ -300,16 +336,132 @@ class _ConnectionCard extends StatelessWidget {
         'Nearby permission denied',
       ChatConnectionStatus.bluetoothOff => 'Bluetooth is off',
       ChatConnectionStatus.unsupported => 'Nearby transport unsupported',
-      ChatConnectionStatus.scanning =>
-        state.activeTransportKind == TransportKind.localWifi
-            ? 'Searching with Android Nearby'
-            : 'Searching nearby over BLE',
+      ChatConnectionStatus.scanning => state.verificationRequests.isNotEmpty
+          ? 'Verify Nearby peer'
+          : state.activeTransportKind == TransportKind.localWifi
+              ? 'Searching with Android Nearby'
+              : 'Searching nearby over BLE',
       ChatConnectionStatus.connected =>
         state.activeTransportKind == TransportKind.localWifi
-            ? 'Android Nearby connected'
+            ? 'Verified Android Nearby connection'
             : 'Nearby BLE connected',
       ChatConnectionStatus.error => 'Nearby chat error',
     };
+  }
+}
+
+class _PeerVerificationCard extends StatefulWidget {
+  const _PeerVerificationCard({
+    required this.request,
+    required this.additionalRequestCount,
+    required this.onApprove,
+    required this.onReject,
+  });
+
+  final PeerVerificationRequest request;
+  final int additionalRequestCount;
+  final PeerVerificationAction onApprove;
+  final PeerVerificationAction onReject;
+
+  @override
+  State<_PeerVerificationCard> createState() =>
+      _PeerVerificationCardState();
+}
+
+class _PeerVerificationCardState extends State<_PeerVerificationCard> {
+  bool _working = false;
+
+  Future<void> _run(PeerVerificationAction action) async {
+    if (_working) {
+      return;
+    }
+    setState(() => _working = true);
+    try {
+      await action(widget.request);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('The peer verification request is no longer active.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _working = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final request = widget.request;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: Card(
+        key: ValueKey<String>('peer-verification-${request.endpointId}'),
+        color: Theme.of(context).colorScheme.secondaryContainer,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                'Verify ${request.displayName}',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Confirm only when the same code appears on the other phone.',
+              ),
+              const SizedBox(height: 8),
+              SelectableText(
+                request.authenticationToken,
+                key: const ValueKey<String>('verification-code'),
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontFamily: 'monospace',
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 2,
+                    ),
+              ),
+              if (widget.additionalRequestCount > 0) ...<Widget>[
+                const SizedBox(height: 4),
+                Text(
+                  '${widget.additionalRequestCount} more peer verification request${widget.additionalRequestCount == 1 ? '' : 's'} waiting.',
+                ),
+              ],
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: <Widget>[
+                  TextButton(
+                    key: ValueKey<String>(
+                      'reject-peer-${request.endpointId}',
+                    ),
+                    onPressed: _working ? null : () => _run(widget.onReject),
+                    child: const Text('Reject'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    key: ValueKey<String>(
+                      'approve-peer-${request.endpointId}',
+                    ),
+                    onPressed: _working ? null : () => _run(widget.onApprove),
+                    icon: _working
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.verified_user),
+                    label: const Text('Codes match'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
