@@ -204,8 +204,10 @@ void main() {
     fallbackTransport.emitVerification(request);
     await _drainEvents();
 
-    expect(session.state.verificationRequests, <PeerVerificationRequest>[request]);
-    expect(session.state.statusMessage, contains('waiting for code verification'));
+    expect(
+        session.state.verificationRequests, <PeerVerificationRequest>[request]);
+    expect(
+        session.state.statusMessage, contains('waiting for code verification'));
 
     await session.approvePeer(request);
     await _drainEvents();
