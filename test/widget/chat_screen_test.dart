@@ -38,7 +38,8 @@ void main() {
 
     expect(find.text('hello mesh'), findsOneWidget);
     expect(find.text('end-to-end encrypted'), findsOneWidget);
-    expect(find.byKey(const ValueKey<String>('e2ee-room-notice')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey<String>('e2ee-room-notice')), findsOneWidget);
     expect(find.textContaining('Connected to 1 nearby peer'), findsWidgets);
     await tester.enterText(
       find.byKey(const ValueKey<String>('message-input')),
@@ -369,7 +370,7 @@ ChatSessionState _state({
       deviceId: '550e8400-e29b-41d4-a716-446655440000',
       displayName: 'Trail Phone',
     ),
-    secureRoom: const SecureRoomSummary(
+    secureRoom: SecureRoomSummary(
       id: 'secureRoomIdentifier1234',
       name: 'Family mesh',
       keyId: 'abcdEFgh12_',
