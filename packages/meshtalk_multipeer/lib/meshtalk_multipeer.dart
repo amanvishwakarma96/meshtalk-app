@@ -63,8 +63,8 @@ class MeshTalkMultipeer {
   MeshTalkMultipeer({
     MethodChannel? methodChannel,
     EventChannel? eventChannel,
-  })  : _methodChannel = methodChannel ??
-            const MethodChannel('meshtalk.multipeer/methods'),
+  })  : _methodChannel =
+            methodChannel ?? const MethodChannel('meshtalk.multipeer/methods'),
         _eventChannel =
             eventChannel ?? const EventChannel('meshtalk.multipeer/events');
 
