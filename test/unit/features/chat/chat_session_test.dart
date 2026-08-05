@@ -7,6 +7,7 @@ import 'package:meshtalk_app/core/ble/message_envelope.dart';
 import 'package:meshtalk_app/core/profile/local_profile.dart';
 import 'package:meshtalk_app/core/storage/stored_chat_message.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
+import 'package:meshtalk_app/core/transport/peer_verification.dart';
 import 'package:meshtalk_app/core/transport/transport_manager.dart';
 import 'package:meshtalk_app/features/chat/data/chat_session.dart';
 import 'package:meshtalk_app/features/chat/domain/chat_session_state.dart';
@@ -17,7 +18,7 @@ import '../../../helpers/fake_message_store.dart';
 void main() {
   late FakeBleRadio radio;
   late FakeChatTransport transport;
-  late FakeChatTransport fallbackTransport;
+  late FakeVerifiableChatTransport fallbackTransport;
   late FakeMessageStore messageStore;
   late ChatSession session;
   var settingsOpened = false;
@@ -25,10 +26,8 @@ void main() {
   setUp(() {
     radio = FakeBleRadio();
     transport = FakeChatTransport(radio);
-    fallbackTransport = FakeChatTransport(
+    fallbackTransport = FakeVerifiableChatTransport(
       radio,
-      transportId: 'fake-android-nearby',
-      transportKind: TransportKind.localWifi,
       forcedAvailability: false,
     );
     messageStore = FakeMessageStore();
@@ -185,7 +184,77 @@ void main() {
 
     expect(session.state.status, ChatConnectionStatus.connected);
     expect(session.state.activeTransportKind, TransportKind.localWifi);
-    expect(session.state.statusMessage, contains('unverified Android Nearby'));
+    expect(session.state.statusMessage, contains('verified Android Nearby'));
+  });
+
+  test('routes matching-code approval to the active verification transport',
+      () async {
+    radio.currentAvailability = BleRadioAvailability.poweredOff;
+    fallbackTransport.forcedAvailability = true;
+    await session.initialize();
+    const request = PeerVerificationRequest(
+      transportId: 'fake-android-nearby',
+      endpointId: 'endpoint-a',
+      peerId: 'peer-a',
+      displayName: 'Peer A',
+      authenticationToken: '4721',
+      isIncomingConnection: true,
+    );
+
+    fallbackTransport.emitVerification(request);
+    await _drainEvents();
+
+    expect(session.state.verificationRequests, <PeerVerificationRequest>[request]);
+    expect(session.state.statusMessage, contains('waiting for code verification'));
+
+    await session.approvePeer(request);
+    await _drainEvents();
+
+    expect(fallbackTransport.approvedEndpointIds, <String>['endpoint-a']);
+    expect(session.state.verificationRequests, isEmpty);
+  });
+
+  test('routes rejection and removes the verification request', () async {
+    radio.currentAvailability = BleRadioAvailability.poweredOff;
+    fallbackTransport.forcedAvailability = true;
+    await session.initialize();
+    const request = PeerVerificationRequest(
+      transportId: 'fake-android-nearby',
+      endpointId: 'endpoint-b',
+      peerId: 'peer-b',
+      displayName: 'Peer B',
+      authenticationToken: '8391',
+      isIncomingConnection: false,
+    );
+
+    fallbackTransport.emitVerification(request);
+    await _drainEvents();
+    await session.rejectPeer(request);
+    await _drainEvents();
+
+    expect(fallbackTransport.rejectedEndpointIds, <String>['endpoint-b']);
+    expect(session.state.verificationRequests, isEmpty);
+  });
+
+  test('records active transport diagnostics', () async {
+    await session.initialize();
+
+    final diagnostics = session.state.diagnostics;
+    expect(diagnostics, isNotNull);
+    expect(diagnostics!.activeTransportId, transport.id);
+    expect(diagnostics.activeTransportKind, TransportKind.bleMesh);
+    expect(diagnostics.bluetoothAvailability, BleRadioAvailability.ready);
+    expect(diagnostics.activeTransportMaxPayloadBytes, 64);
+    expect(diagnostics.lastError, isNull);
+  });
+
+  test('refreshes transport availability when the app resumes', () async {
+    await session.initialize();
+    final checksBeforeResume = transport.availabilityChecks;
+
+    await session.onAppResumed();
+
+    expect(transport.availabilityChecks, greaterThan(checksBeforeResume));
   });
 
   test('flushes the durable queue through the Android Nearby fallback',
