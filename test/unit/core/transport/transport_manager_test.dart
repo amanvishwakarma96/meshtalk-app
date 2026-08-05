@@ -135,7 +135,7 @@ void main() {
 
       verify(() => ble.send(message)).called(2);
       expect(manager.pendingCount, 0);
-      verify(ble.connect).called(1);
+      verify(ble.connect).called(2);
       await manager.dispose();
     });
 

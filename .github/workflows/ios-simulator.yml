@@ -1,0 +1,79 @@
+name: iOS Simulator
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ios-simulator.yml'
+      - 'ios/**'
+      - 'lib/**'
+      - 'packages/meshtalk_multipeer/**'
+      - 'pubspec.yaml'
+      - 'tool/configure_ios_project.sh'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/ios-simulator.yml'
+      - 'ios/**'
+      - 'lib/**'
+      - 'packages/meshtalk_multipeer/**'
+      - 'pubspec.yaml'
+      - 'tool/configure_ios_project.sh'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ios-simulator:
+    runs-on: macos-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate iOS project when missing
+        run: |
+          if [ ! -d ios ]; then
+            flutter create \
+              --platforms=ios \
+              --org com.amanvishwakarma \
+              --project-name meshtalk_app \
+              .
+          fi
+
+      - name: Configure iOS local transports
+        run: bash tool/configure_ios_project.sh
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build iOS simulator app
+        run: flutter build ios --simulator --no-codesign
+
+      - name: Prepare simulator artifact
+        run: |
+          mkdir -p artifacts
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/ios/iphonesimulator/Runner.app \
+            artifacts/meshtalk-ios-simulator.zip
+          shasum -a 256 artifacts/meshtalk-ios-simulator.zip \
+            > artifacts/meshtalk-ios-simulator.zip.sha256
+
+      - name: Upload simulator artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: meshtalk-ios-simulator-${{ github.run_number }}
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: error

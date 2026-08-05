@@ -40,12 +40,11 @@ class TransportManager {
       if (!await transport.isAvailable()) {
         continue;
       }
-      if (identical(transport, _active)) {
-        candidate = transport;
-        break;
-      }
 
       try {
+        // connect is intentionally idempotent. Re-invoking it lets an active
+        // transport recover after a native runtime failure without requiring
+        // the manager to understand platform-specific health state.
         await transport.connect();
         candidate = transport;
         break;

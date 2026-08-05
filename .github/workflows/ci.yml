@@ -33,7 +33,7 @@ jobs:
 
       - name: Verify formatting
         run: |
-          dart format lib test integration_test
+          dart format lib packages test integration_test
           git diff --exit-code
 
       - name: Analyze

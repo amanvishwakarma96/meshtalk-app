@@ -28,6 +28,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - User-confirmed Android Nearby authentication-code verification before connection acceptance or payload delivery.
 - Transport diagnostics dialog for radio state, active transport, peer count, queued messages, payload limit, refresh time, and last error.
 - Foreground-resume transport refresh with serialized recovery requests.
+- Private iOS Flutter plugin backed by Apple's Multipeer Connectivity framework.
+- Verified iOS local-network fallback with six-digit comparison codes, required `MCSession` link encryption, reliable byte delivery, and shared queue/relay handling.
+- Repeatable iOS runner configuration for Local Network, Bonjour, and Bluetooth usage descriptions.
+- macOS GitHub Actions workflow that compiles the Swift bridge and produces a downloadable iOS simulator artifact with checksum.
+- iOS transport tests for availability, verification, peer publication, message decoding, broadcast failures, payload bounds, and runtime diagnostics.
 
 ### Changed
 
@@ -36,7 +41,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - The app now launches the live session-backed chat page instead of the static chat shell.
 - `TransportManager` now emits successful-send events used to update durable delivery state.
 - `TransportManager` now continues to lower-priority transports when a higher-priority transport fails to activate and preserves a working fallback when an upgrade fails.
+- `TransportManager` now re-invokes idempotent activation during refresh so an active native transport can recover after a runtime failure.
 - `ChatSession` now consumes peer and message streams from every registered transport while keeping BLE as the first priority.
+- `ChatSession` now reports platform-specific Android Nearby or iOS Multipeer status and records native runtime errors in transport diagnostics.
 - Android Nearby peers are now shown as connected only after the user confirms that the authentication codes match on both phones.
 
 ### Fixed

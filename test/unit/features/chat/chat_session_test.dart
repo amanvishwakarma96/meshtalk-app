@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -9,6 +10,7 @@ import 'package:meshtalk_app/core/storage/stored_chat_message.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
 import 'package:meshtalk_app/core/transport/peer_verification.dart';
 import 'package:meshtalk_app/core/transport/transport_manager.dart';
+import 'package:meshtalk_app/core/transport/transport_runtime_diagnostics.dart';
 import 'package:meshtalk_app/features/chat/data/chat_session.dart';
 import 'package:meshtalk_app/features/chat/domain/chat_session_state.dart';
 
@@ -19,6 +21,7 @@ void main() {
   late FakeBleRadio radio;
   late FakeChatTransport transport;
   late FakeVerifiableChatTransport fallbackTransport;
+  FakeDiagnosticChatTransport? diagnosticTransport;
   late FakeMessageStore messageStore;
   late ChatSession session;
   var settingsOpened = false;
@@ -28,8 +31,10 @@ void main() {
     transport = FakeChatTransport(radio);
     fallbackTransport = FakeVerifiableChatTransport(
       radio,
+      transportId: 'android-nearby',
       forcedAvailability: false,
     );
+    diagnosticTransport = null;
     messageStore = FakeMessageStore();
     settingsOpened = false;
     session = ChatSession(
@@ -51,6 +56,7 @@ void main() {
 
   tearDown(() async {
     await session.close();
+    await diagnosticTransport?.close();
     await transport.close();
     await fallbackTransport.close();
     await radio.close();
@@ -187,13 +193,54 @@ void main() {
     expect(session.state.statusMessage, contains('verified Android Nearby'));
   });
 
+  test('labels iOS Multipeer and records native runtime errors', () async {
+    await session.close();
+    radio.currentAvailability = BleRadioAvailability.poweredOff;
+    diagnosticTransport = FakeDiagnosticChatTransport(
+      radio,
+      transportId: 'ios-multipeer',
+      forcedAvailability: true,
+    );
+    final iosFallback = diagnosticTransport!;
+    session = ChatSession(
+      profile: const LocalProfile(
+        deviceId: 'device-local',
+        displayName: 'Trail Phone',
+      ),
+      radio: radio,
+      bleTransport: transport,
+      transportManager: TransportManager(
+        transports: <ChatTransport>[transport, iosFallback],
+      ),
+      messageStore: messageStore,
+      openAppSettings: () async {},
+    );
+
+    await session.initialize();
+
+    expect(session.state.activeTransportKind, TransportKind.localWifi);
+    expect(session.state.statusMessage, contains('iOS Multipeer Connectivity'));
+
+    iosFallback.emitRuntimeError('iOS local-network discovery stopped.');
+    await _drainEvents();
+
+    expect(
+      session.state.diagnostics?.lastError,
+      'iOS local-network discovery stopped.',
+    );
+    expect(
+      session.state.statusMessage,
+      'iOS local-network discovery stopped.',
+    );
+  });
+
   test('routes matching-code approval to the active verification transport',
       () async {
     radio.currentAvailability = BleRadioAvailability.poweredOff;
     fallbackTransport.forcedAvailability = true;
     await session.initialize();
     const request = PeerVerificationRequest(
-      transportId: 'fake-android-nearby',
+      transportId: 'android-nearby',
       endpointId: 'endpoint-a',
       peerId: 'peer-a',
       displayName: 'Peer A',
@@ -225,7 +272,7 @@ void main() {
     fallbackTransport.forcedAvailability = true;
     await session.initialize();
     const request = PeerVerificationRequest(
-      transportId: 'fake-android-nearby',
+      transportId: 'android-nearby',
       endpointId: 'endpoint-b',
       peerId: 'peer-b',
       displayName: 'Peer B',
@@ -315,4 +362,32 @@ Future<void> _drainEvents() async {
   await Future<void>.delayed(Duration.zero);
   await Future<void>.delayed(Duration.zero);
   await Future<void>.delayed(Duration.zero);
+}
+
+class FakeDiagnosticChatTransport extends FakeChatTransport
+    implements TransportRuntimeDiagnostics {
+  FakeDiagnosticChatTransport(
+    super.radio, {
+    required super.transportId,
+    super.forcedAvailability,
+  }) : super(transportKind: TransportKind.localWifi);
+
+  final StreamController<TransportRuntimeError> _runtimeErrorController =
+      StreamController<TransportRuntimeError>.broadcast();
+
+  @override
+  Stream<TransportRuntimeError> get runtimeErrors =>
+      _runtimeErrorController.stream;
+
+  void emitRuntimeError(String message) {
+    _runtimeErrorController.add(
+      TransportRuntimeError(transportId: id, message: message),
+    );
+  }
+
+  @override
+  Future<void> close() async {
+    await super.close();
+    await _runtimeErrorController.close();
+  }
 }
