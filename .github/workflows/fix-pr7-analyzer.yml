@@ -1,0 +1,121 @@
+name: Fix PR7 analyzer findings
+
+on:
+  push:
+    branches:
+      - agent/peer-verification-diagnostics
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/peer-verification-diagnostics
+          fetch-depth: 0
+
+      - name: Apply targeted fixes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new):
+              file = Path(path)
+              text = file.read_text()
+              if old not in text:
+                  raise SystemExit(f"Expected text not found in {path}: {old!r}")
+              file.write_text(text.replace(old, new, 1))
+
+          replace(
+              'lib/core/transport/android_nearby_transport.dart',
+              "      throw StateError(\n          'The Nearby peer verification request is no longer active.');",
+              "      throw StateError(\n        'The Nearby peer verification request is no longer active.',\n      );",
+          )
+
+          replace(
+              'lib/features/chat/data/chat_session.dart',
+              """      if (transport is PeerVerificationTransport) {
+        _verificationTransports[transport.id] = transport;
+        _verificationRequestsByTransportId[transport.id] =
+            transport.currentVerificationRequests;
+        _subscriptions.add(
+          transport.verificationRequests.listen(
+            (requests) => _handleVerificationRequests(
+              transport.id,
+              requests,
+            ),
+          ),
+        );
+      }
+""",
+              """      if (transport is PeerVerificationTransport) {
+        final verificationTransport = transport as PeerVerificationTransport;
+        _verificationTransports[transport.id] = verificationTransport;
+        _verificationRequestsByTransportId[transport.id] =
+            verificationTransport.currentVerificationRequests;
+        _subscriptions.add(
+          verificationTransport.verificationRequests.listen(
+            (requests) => _handleVerificationRequests(
+              transport.id,
+              requests,
+            ),
+          ),
+        );
+      }
+""",
+          )
+
+          path = Path('test/unit/core/transport/android_nearby_transport_test.dart')
+          text = path.read_text()
+          text = text.replace("import 'dart:async';\n", '', 1)
+          text = text.replace('  NearbyDisconnected? _onDisconnected;\n', '', 1)
+          text = text.replace('  NearbyEndpointLost? _onEndpointLost;\n', '', 1)
+          text = text.replace('    _onDisconnected = onDisconnected;\n', '', 2)
+          text = text.replace('    _onEndpointLost = onEndpointLost;\n', '', 1)
+          path.write_text(text)
+
+          replace(
+              'test/unit/features/chat/chat_session_test.dart',
+              """    expect(
+        session.state.verificationRequests, <PeerVerificationRequest>[request]);
+    expect(
+        session.state.statusMessage, contains('waiting for code verification'));
+""",
+              """    expect(
+      session.state.verificationRequests,
+      <PeerVerificationRequest>[request],
+    );
+    expect(
+      session.state.statusMessage,
+      contains('waiting for code verification'),
+    );
+""",
+          )
+          PY
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Format changed Dart files
+        run: dart format lib test integration_test
+
+      - name: Commit fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib test integration_test
+          git commit -m "fix: resolve verification analyzer findings"
+          git push origin HEAD:agent/peer-verification-diagnostics
