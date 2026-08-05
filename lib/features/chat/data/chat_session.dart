@@ -11,6 +11,7 @@ import 'package:meshtalk_app/core/storage/stored_chat_message.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
 import 'package:meshtalk_app/core/transport/peer_verification.dart';
 import 'package:meshtalk_app/core/transport/transport_manager.dart';
+import 'package:meshtalk_app/core/transport/transport_runtime_diagnostics.dart';
 import 'package:meshtalk_app/features/chat/domain/chat_session_state.dart';
 import 'package:meshtalk_app/features/chat/domain/transport_diagnostics.dart';
 import 'package:uuid/uuid.dart';
@@ -114,6 +115,15 @@ class ChatSession extends ChangeNotifier {
               transport.id,
               requests,
             ),
+          ),
+        );
+      }
+
+      if (transport is TransportRuntimeDiagnostics) {
+        final diagnosticsTransport = transport as TransportRuntimeDiagnostics;
+        _subscriptions.add(
+          diagnosticsTransport.runtimeErrors.listen(
+            (error) => _handleRuntimeError(transport, error),
           ),
         );
       }
@@ -271,6 +281,26 @@ class ChatSession extends ChangeNotifier {
     );
   }
 
+  void _handleRuntimeError(
+    ChatTransport source,
+    TransportRuntimeError error,
+  ) {
+    final active = _transportManager.active;
+    if (active == null || active.id != source.id) {
+      return;
+    }
+
+    _replaceState(
+      _state.copyWith(
+        statusMessage: error.message,
+        diagnostics: _diagnosticsForActive(
+          active,
+          lastError: error.message,
+        ),
+      ),
+    );
+  }
+
   void _handleActiveTransportChanged(ChatTransport? active) {
     if (active == null) {
       return;
@@ -375,8 +405,8 @@ class ChatSession extends ChangeNotifier {
         try {
           await _bleTransport.connect();
         } catch (_) {
-          // TransportManager will continue to the Android fallback when the
-          // BLE path remains unavailable.
+          // TransportManager will continue to a platform local-network
+          // fallback when the BLE path remains unavailable.
         }
       }
 
@@ -397,8 +427,7 @@ class ChatSession extends ChangeNotifier {
         _replaceState(
           _state.copyWith(
             status: ChatConnectionStatus.localNetworkPermissionDenied,
-            statusMessage:
-                'Nearby devices permission is required for the Android fallback.',
+            statusMessage: error.message,
             peers: const <NearbyPeer>[],
             pendingCount: _transportManager.pendingCount,
             verificationRequests: const <PeerVerificationRequest>[],
@@ -494,7 +523,7 @@ class ChatSession extends ChangeNotifier {
         ),
       BleRadioAvailability.poweredOff => (
           ChatConnectionStatus.bluetoothOff,
-          'Bluetooth is off and no Android Nearby fallback is active.',
+          'Bluetooth is off and no local-network fallback is active.',
         ),
       BleRadioAvailability.ready => (
           ChatConnectionStatus.error,
@@ -599,7 +628,7 @@ class ChatSession extends ChangeNotifier {
       TransportKind.bleMesh =>
         'Searching for nearby MeshTalk peers over BLE…$suffix',
       TransportKind.localWifi =>
-        'BLE unavailable. Searching with Android Nearby Connections…$suffix',
+        'BLE unavailable. Searching with ${_localTransportName(transport)}…$suffix',
       TransportKind.internetRelay => 'Searching for an internet relay…$suffix',
     };
   }
@@ -613,9 +642,17 @@ class ChatSession extends ChangeNotifier {
     return switch (transport.kind) {
       TransportKind.bleMesh => 'Connected to $peerLabel over BLE.',
       TransportKind.localWifi =>
-        'Connected to $peerLabel over verified Android Nearby.',
+        'Connected to $peerLabel over verified ${_localTransportName(transport)}.',
       TransportKind.internetRelay =>
         'Connected to $peerLabel through an internet relay.',
+    };
+  }
+
+  String _localTransportName(ChatTransport transport) {
+    return switch (transport.id) {
+      'android-nearby' => 'Android Nearby Connections',
+      'ios-multipeer' => 'iOS Multipeer Connectivity',
+      _ => 'local-network fallback',
     };
   }
 
