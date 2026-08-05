@@ -1,5 +1,6 @@
 class PeerVerificationRequest {
   const PeerVerificationRequest({
+    required this.transportId,
     required this.endpointId,
     required this.peerId,
     required this.displayName,
@@ -7,6 +8,7 @@ class PeerVerificationRequest {
     required this.isIncomingConnection,
   });
 
+  final String transportId;
   final String endpointId;
   final String peerId;
   final String displayName;
