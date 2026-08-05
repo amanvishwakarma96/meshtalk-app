@@ -1,5 +1,7 @@
 import 'package:meshtalk_app/core/profile/local_profile.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
+import 'package:meshtalk_app/core/transport/peer_verification.dart';
+import 'package:meshtalk_app/features/chat/domain/transport_diagnostics.dart';
 
 enum ChatConnectionStatus {
   initializing,
@@ -63,6 +65,8 @@ class ChatSessionState {
     required this.peers,
     required this.pendingCount,
     this.activeTransportKind,
+    this.verificationRequests = const <PeerVerificationRequest>[],
+    this.diagnostics,
   });
 
   factory ChatSessionState.initial(LocalProfile profile) {
@@ -83,6 +87,8 @@ class ChatSessionState {
   final List<NearbyPeer> peers;
   final int pendingCount;
   final TransportKind? activeTransportKind;
+  final List<PeerVerificationRequest> verificationRequests;
+  final TransportDiagnosticsSnapshot? diagnostics;
 
   bool get canSend =>
       status == ChatConnectionStatus.scanning ||
@@ -104,6 +110,8 @@ class ChatSessionState {
     List<NearbyPeer>? peers,
     int? pendingCount,
     TransportKind? activeTransportKind,
+    List<PeerVerificationRequest>? verificationRequests,
+    TransportDiagnosticsSnapshot? diagnostics,
     bool clearActiveTransport = false,
   }) {
     return ChatSessionState(
@@ -116,6 +124,9 @@ class ChatSessionState {
       activeTransportKind: clearActiveTransport
           ? null
           : activeTransportKind ?? this.activeTransportKind,
+      verificationRequests:
+          verificationRequests ?? this.verificationRequests,
+      diagnostics: diagnostics ?? this.diagnostics,
     );
   }
 }
