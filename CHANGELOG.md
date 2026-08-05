@@ -25,6 +25,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Android-only Nearby Connections fallback using the P2P cluster strategy and byte payloads.
 - Stable MeshTalk endpoint identities, deterministic connection initiation, invalid-peer rejection, and fallback-specific UI warnings.
 - Android Nearby transport tests for authorization, discovery, connection, broadcast delivery, malformed payloads, and cleanup.
+- User-confirmed Android Nearby authentication-code verification before connection acceptance or payload delivery.
+- Transport diagnostics dialog for radio state, active transport, peer count, queued messages, payload limit, refresh time, and last error.
+- Foreground-resume transport refresh with serialized recovery requests.
 
 ### Changed
 
@@ -34,6 +37,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - `TransportManager` now emits successful-send events used to update durable delivery state.
 - `TransportManager` now continues to lower-priority transports when a higher-priority transport fails to activate and preserves a working fallback when an upgrade fails.
 - `ChatSession` now consumes peer and message streams from every registered transport while keeping BLE as the first priority.
+- Android Nearby peers are now shown as connected only after the user confirms that the authentication codes match on both phones.
 
 ### Fixed
 
@@ -41,3 +45,4 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Locally originated message IDs are marked as seen so radio echoes are not shown or relayed again.
 - Relaying an incoming envelope no longer changes its local delivery label from received to sent.
 - Restored queued messages are deduplicated before entering the in-memory transport queue.
+- Duplicate or stale Nearby connection callbacks no longer bypass the pending verification state.
