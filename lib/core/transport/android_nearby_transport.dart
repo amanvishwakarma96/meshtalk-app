@@ -7,8 +7,10 @@ import 'package:meshtalk_app/core/profile/local_profile.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
 import 'package:meshtalk_app/core/transport/nearby_connections_gateway.dart';
 import 'package:meshtalk_app/core/transport/nearby_endpoint_identity.dart';
+import 'package:meshtalk_app/core/transport/peer_verification.dart';
 
-class AndroidNearbyTransport implements ChatTransport {
+class AndroidNearbyTransport
+    implements ChatTransport, PeerVerificationTransport {
   AndroidNearbyTransport({
     required LocalProfile profile,
     required NearbyConnectionsGateway gateway,
@@ -38,8 +40,13 @@ class AndroidNearbyTransport implements ChatTransport {
       StreamController<MessageEnvelope>.broadcast();
   final StreamController<List<NearbyPeer>> _nearbyPeers =
       StreamController<List<NearbyPeer>>.broadcast();
+  final StreamController<List<PeerVerificationRequest>>
+      _verificationRequests =
+      StreamController<List<PeerVerificationRequest>>.broadcast();
   final Map<String, NearbyEndpointIdentity> _knownEndpoints =
       <String, NearbyEndpointIdentity>{};
+  final Map<String, PeerVerificationRequest> _pendingVerifications =
+      <String, PeerVerificationRequest>{};
   final Set<String> _connectedEndpointIds = <String>{};
   final Set<String> _pendingEndpointIds = <String>{};
   final Set<String> _acceptedEndpointIds = <String>{};
@@ -65,6 +72,17 @@ class AndroidNearbyTransport implements ChatTransport {
 
   @override
   Stream<List<NearbyPeer>> get nearbyPeers => _nearbyPeers.stream;
+
+  @override
+  List<PeerVerificationRequest> get currentVerificationRequests {
+    final requests = _pendingVerifications.values.toList(growable: false)
+      ..sort((left, right) => left.peerId.compareTo(right.peerId));
+    return List<PeerVerificationRequest>.unmodifiable(requests);
+  }
+
+  @override
+  Stream<List<PeerVerificationRequest>> get verificationRequests =>
+      _verificationRequests.stream;
 
   @override
   Future<bool> isAvailable() async => _gateway.isSupported;
@@ -143,7 +161,8 @@ class AndroidNearbyTransport implements ChatTransport {
         _knownEndpoints.isEmpty &&
         _connectedEndpointIds.isEmpty &&
         _pendingEndpointIds.isEmpty &&
-        _acceptedEndpointIds.isEmpty) {
+        _acceptedEndpointIds.isEmpty &&
+        _pendingVerifications.isEmpty) {
       return;
     }
 
@@ -153,7 +172,38 @@ class AndroidNearbyTransport implements ChatTransport {
     _connectedEndpointIds.clear();
     _pendingEndpointIds.clear();
     _acceptedEndpointIds.clear();
+    _pendingVerifications.clear();
     _publishPeers();
+    _publishVerificationRequests();
+  }
+
+  @override
+  Future<void> approvePeer(String endpointId) async {
+    final request = _pendingVerifications[endpointId];
+    if (!_started || request == null) {
+      throw StateError('The Nearby peer verification request is no longer active.');
+    }
+    if (!_acceptedEndpointIds.add(endpointId)) {
+      return;
+    }
+
+    _pendingVerifications.remove(endpointId);
+    _publishVerificationRequests();
+    await _acceptConnection(endpointId);
+  }
+
+  @override
+  Future<void> rejectPeer(String endpointId) async {
+    final existed = _pendingVerifications.remove(endpointId) != null;
+    _pendingEndpointIds.remove(endpointId);
+    _acceptedEndpointIds.remove(endpointId);
+    _connectedEndpointIds.remove(endpointId);
+    _knownEndpoints.remove(endpointId);
+    if (existed) {
+      _publishVerificationRequests();
+    }
+    _publishPeers();
+    await _rejectEndpointBestEffort(endpointId);
   }
 
   @override
@@ -162,7 +212,7 @@ class AndroidNearbyTransport implements ChatTransport {
       throw StateError('Android Nearby transport is not connected.');
     }
     if (_connectedEndpointIds.isEmpty) {
-      throw StateError('No Android Nearby peers are connected.');
+      throw StateError('No verified Android Nearby peers are connected.');
     }
 
     final payload = _codec.encode(message);
@@ -232,7 +282,12 @@ class AndroidNearbyTransport implements ChatTransport {
     }
     _pendingEndpointIds.remove(endpointId);
     _acceptedEndpointIds.remove(endpointId);
+    final verificationRemoved =
+        _pendingVerifications.remove(endpointId) != null;
     _knownEndpoints.remove(endpointId);
+    if (verificationRemoved) {
+      _publishVerificationRequests();
+    }
   }
 
   void _handleConnectionInitiated(
@@ -245,18 +300,27 @@ class AndroidNearbyTransport implements ChatTransport {
     }
 
     final identity = _identityCodec.decode(connectionInfo.endpointName);
-    if (!_isValidRemoteIdentity(identity)) {
+    final authenticationToken = connectionInfo.authenticationToken.trim();
+    if (!_isValidRemoteIdentity(identity) || authenticationToken.isEmpty) {
       unawaited(_rejectEndpointBestEffort(endpointId));
+      return;
+    }
+    if (_connectedEndpointIds.contains(endpointId) ||
+        _acceptedEndpointIds.contains(endpointId) ||
+        _pendingVerifications.containsKey(endpointId)) {
       return;
     }
 
     _knownEndpoints[endpointId] = identity!;
-    if (_connectedEndpointIds.contains(endpointId) ||
-        !_acceptedEndpointIds.add(endpointId)) {
-      return;
-    }
     _pendingEndpointIds.add(endpointId);
-    unawaited(_acceptConnection(endpointId));
+    _pendingVerifications[endpointId] = PeerVerificationRequest(
+      endpointId: endpointId,
+      peerId: identity.deviceId,
+      displayName: identity.displayName,
+      authenticationToken: authenticationToken,
+      isIncomingConnection: connectionInfo.isIncomingConnection,
+    );
+    _publishVerificationRequests();
   }
 
   void _handleConnectionResult(
@@ -264,19 +328,28 @@ class AndroidNearbyTransport implements ChatTransport {
     NearbyConnectionResult result,
   ) {
     _pendingEndpointIds.remove(endpointId);
+    final verificationRemoved =
+        _pendingVerifications.remove(endpointId) != null;
     if (!_started ||
         result != NearbyConnectionResult.connected ||
+        !_acceptedEndpointIds.contains(endpointId) ||
         !_knownEndpoints.containsKey(endpointId)) {
       _connectedEndpointIds.remove(endpointId);
       _acceptedEndpointIds.remove(endpointId);
       if (result != NearbyConnectionResult.connected) {
         _knownEndpoints.remove(endpointId);
       }
+      if (verificationRemoved) {
+        _publishVerificationRequests();
+      }
       _publishPeers();
       return;
     }
 
     _connectedEndpointIds.add(endpointId);
+    if (verificationRemoved) {
+      _publishVerificationRequests();
+    }
     _publishPeers();
   }
 
@@ -284,7 +357,12 @@ class AndroidNearbyTransport implements ChatTransport {
     _pendingEndpointIds.remove(endpointId);
     _connectedEndpointIds.remove(endpointId);
     _acceptedEndpointIds.remove(endpointId);
+    final verificationRemoved =
+        _pendingVerifications.remove(endpointId) != null;
     _knownEndpoints.remove(endpointId);
+    if (verificationRemoved) {
+      _publishVerificationRequests();
+    }
     _publishPeers();
   }
 
@@ -299,6 +377,7 @@ class AndroidNearbyTransport implements ChatTransport {
       );
       if (!requested) {
         _pendingEndpointIds.remove(endpointId);
+        _knownEndpoints.remove(endpointId);
       }
     } catch (_) {
       _pendingEndpointIds.remove(endpointId);
@@ -323,11 +402,14 @@ class AndroidNearbyTransport implements ChatTransport {
       _acceptedEndpointIds.remove(endpointId);
       _knownEndpoints.remove(endpointId);
       await _rejectEndpointBestEffort(endpointId);
+      rethrow;
     }
   }
 
   void _handleBytesReceived(String endpointId, Uint8List bytes) {
-    if (!_started || !_connectedEndpointIds.contains(endpointId)) {
+    if (!_started ||
+        !_connectedEndpointIds.contains(endpointId) ||
+        !_acceptedEndpointIds.contains(endpointId)) {
       return;
     }
     try {
@@ -359,6 +441,10 @@ class AndroidNearbyTransport implements ChatTransport {
     _nearbyPeers.add(List<NearbyPeer>.unmodifiable(peers));
   }
 
+  void _publishVerificationRequests() {
+    _verificationRequests.add(currentVerificationRequests);
+  }
+
   Future<void> _disconnectEndpointBestEffort(String endpointId) async {
     try {
       await _gateway.disconnectFromEndpoint(endpointId);
@@ -371,7 +457,7 @@ class AndroidNearbyTransport implements ChatTransport {
     try {
       await _gateway.rejectConnection(endpointId);
     } catch (_) {
-      // Invalid endpoints are ignored even if the platform reject call fails.
+      // Invalid or declined endpoints remain disconnected even if rejection fails.
     }
   }
 
