@@ -488,7 +488,8 @@ class ChatSession extends ChangeNotifier {
     } on MessageProtectionException {
       return _timelineMessage(
         stored: stored,
-        text: 'Encrypted message could not be authenticated with this room key.',
+        text:
+            'Encrypted message could not be authenticated with this room key.',
         protectionStatus: MessageProtectionStatus.unableToDecrypt,
       );
     }
