@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:meshtalk_app/core/ble/ble_mesh_radio.dart';
 import 'package:meshtalk_app/core/ble/message_envelope.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
+import 'package:meshtalk_app/core/transport/peer_verification.dart';
 
 class FakeBleRadio implements BleMeshRadio {
   final StreamController<BleRadioAvailability> _availabilityController =
@@ -75,6 +76,7 @@ class FakeChatTransport implements ChatTransport {
   final List<MessageEnvelope> sentMessages = <MessageEnvelope>[];
   List<NearbyPeer> _peers = const <NearbyPeer>[];
   bool _connected = false;
+  int availabilityChecks = 0;
 
   bool get connected => _connected;
 
@@ -117,6 +119,7 @@ class FakeChatTransport implements ChatTransport {
 
   @override
   Future<bool> isAvailable() async {
+    availabilityChecks += 1;
     final forced = forcedAvailability;
     if (forced != null) {
       return forced;
@@ -146,5 +149,89 @@ class FakeChatTransport implements ChatTransport {
   Future<void> close() async {
     await _incomingController.close();
     await _peerController.close();
+  }
+}
+
+class FakeVerifiableChatTransport extends FakeChatTransport
+    implements PeerVerificationTransport {
+  FakeVerifiableChatTransport(
+    super.radio, {
+    super.transportId = 'fake-android-nearby',
+    super.transportKind = TransportKind.localWifi,
+    super.forcedAvailability,
+  });
+
+  final StreamController<List<PeerVerificationRequest>>
+      _verificationController =
+      StreamController<List<PeerVerificationRequest>>.broadcast();
+  final List<PeerVerificationRequest> _verificationRequests =
+      <PeerVerificationRequest>[];
+  final List<String> approvedEndpointIds = <String>[];
+  final List<String> rejectedEndpointIds = <String>[];
+
+  @override
+  List<PeerVerificationRequest> get currentVerificationRequests =>
+      List<PeerVerificationRequest>.unmodifiable(_verificationRequests);
+
+  @override
+  Stream<List<PeerVerificationRequest>> get verificationRequests =>
+      _verificationController.stream;
+
+  @override
+  Future<void> approvePeer(String endpointId) async {
+    final removed = _removeVerification(endpointId);
+    if (!removed) {
+      throw StateError('Verification request missing');
+    }
+    approvedEndpointIds.add(endpointId);
+    _publishVerifications();
+  }
+
+  @override
+  Future<void> rejectPeer(String endpointId) async {
+    final removed = _removeVerification(endpointId);
+    if (!removed) {
+      return;
+    }
+    rejectedEndpointIds.add(endpointId);
+    _publishVerifications();
+  }
+
+  void emitVerification(PeerVerificationRequest request) {
+    _verificationRequests
+      ..removeWhere(
+        (existing) =>
+            existing.transportId == request.transportId &&
+            existing.endpointId == request.endpointId,
+      )
+      ..add(request);
+    _publishVerifications();
+  }
+
+  @override
+  Future<void> disconnect() async {
+    await super.disconnect();
+    if (_verificationRequests.isNotEmpty) {
+      _verificationRequests.clear();
+      _publishVerifications();
+    }
+  }
+
+  @override
+  Future<void> close() async {
+    await super.close();
+    await _verificationController.close();
+  }
+
+  bool _removeVerification(String endpointId) {
+    final before = _verificationRequests.length;
+    _verificationRequests.removeWhere(
+      (request) => request.endpointId == endpointId,
+    );
+    return _verificationRequests.length != before;
+  }
+
+  void _publishVerifications() {
+    _verificationController.add(currentVerificationRequests);
   }
 }
