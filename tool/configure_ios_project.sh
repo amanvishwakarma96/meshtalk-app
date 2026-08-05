@@ -33,6 +33,15 @@ info["NSBonjourServices"] = sorted(set(bonjour))
 with info_path.open("wb") as destination:
     plistlib.dump(info, destination, sort_keys=False)
 
+entitlements_path = Path("ios/Runner/Runner.entitlements")
+entitlements = {
+    "keychain-access-groups": [
+        "$(AppIdentifierPrefix)$(CFBundleIdentifier)",
+    ],
+}
+with entitlements_path.open("wb") as destination:
+    plistlib.dump(entitlements, destination, sort_keys=False)
+
 podfile = Path("ios/Podfile")
 if podfile.exists():
     text = podfile.read_text()
@@ -52,8 +61,18 @@ if project.exists():
         "IPHONEOS_DEPLOYMENT_TARGET = 13.0;",
         text,
     )
+    text = re.sub(
+        r"\n\s*CODE_SIGN_ENTITLEMENTS = Runner/Runner\.entitlements;",
+        "",
+        text,
+    )
+    text = text.replace(
+        "CODE_SIGN_STYLE = Automatic;",
+        "CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;\n\t\t\t\tCODE_SIGN_STYLE = Automatic;",
+    )
     project.write_text(text)
 PY
 
 /usr/libexec/PlistBuddy -c 'Print :NSLocalNetworkUsageDescription' ios/Runner/Info.plist
 /usr/libexec/PlistBuddy -c 'Print :NSBonjourServices' ios/Runner/Info.plist
+/usr/libexec/PlistBuddy -c 'Print :keychain-access-groups' ios/Runner/Runner.entitlements

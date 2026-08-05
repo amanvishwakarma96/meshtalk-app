@@ -5,6 +5,10 @@ import 'package:meshtalk_app/core/ble/ble_mesh_radio.dart';
 import 'package:meshtalk_app/core/ble/bluetooth_low_energy_mesh_radio.dart';
 import 'package:meshtalk_app/core/profile/local_profile.dart';
 import 'package:meshtalk_app/core/profile/profile_store.dart';
+import 'package:meshtalk_app/core/security/flutter_secure_value_store.dart';
+import 'package:meshtalk_app/core/security/message_protector.dart';
+import 'package:meshtalk_app/core/security/secure_room.dart';
+import 'package:meshtalk_app/core/security/secure_room_store.dart';
 import 'package:meshtalk_app/core/storage/message_store.dart';
 import 'package:meshtalk_app/core/storage/sqlite_message_store.dart';
 import 'package:meshtalk_app/core/transport/android_nearby_transport.dart';
@@ -27,6 +31,22 @@ final profileStoreProvider = Provider<ProfileStore>((ref) {
 
 final localProfileProvider = FutureProvider<LocalProfile>((ref) async {
   return ref.watch(profileStoreProvider).loadOrCreate();
+});
+
+final secureValueStoreProvider = Provider<SecureValueStore>((ref) {
+  return FlutterSecureValueStore();
+});
+
+final secureRoomStoreProvider = Provider<SecureRoomStore>((ref) {
+  return SecureRoomStore(values: ref.watch(secureValueStoreProvider));
+});
+
+final activeSecureRoomProvider = FutureProvider<SecureRoom>((ref) async {
+  return ref.watch(secureRoomStoreProvider).loadOrCreate();
+});
+
+final messageProtectorProvider = Provider<MessageProtector>((ref) {
+  return MessageProtector();
 });
 
 final messageStoreProvider = Provider<MessageStore>((ref) {
@@ -57,6 +77,7 @@ final iosMultipeerGatewayProvider = Provider<IosMultipeerGateway>(
 
 final chatSessionProvider = FutureProvider<ChatSession>((ref) async {
   final profile = await ref.watch(localProfileProvider.future);
+  final secureRoom = await ref.watch(activeSecureRoomProvider.future);
   final radio = ref.watch(bleRadioFactoryProvider)(profile);
   final bleTransport = BleTransport(radio: radio);
   final nearbyGateway = ref.watch(nearbyConnectionsGatewayProvider);
@@ -82,6 +103,8 @@ final chatSessionProvider = FutureProvider<ChatSession>((ref) async {
   final transportManager = TransportManager(transports: transports);
   final session = ChatSession(
     profile: profile,
+    secureRoom: secureRoom,
+    messageProtector: ref.watch(messageProtectorProvider),
     radio: radio,
     bleTransport: bleTransport,
     transportManager: transportManager,

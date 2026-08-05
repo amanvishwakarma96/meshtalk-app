@@ -11,8 +11,10 @@ dependencies:
     sdk: flutter
   bluetooth_low_energy: ^6.2.1
   connectivity_plus: ^7.3.1
+  cryptography: ^2.9.0
   device_info_plus: 11.4.0
   flutter_riverpod: ^3.4.2
+  flutter_secure_storage: ^10.3.1
   meshtalk_multipeer:
     path: packages/meshtalk_multipeer
   nearby_connections: ^4.3.0

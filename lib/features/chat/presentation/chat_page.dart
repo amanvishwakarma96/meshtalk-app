@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:meshtalk_app/app_providers.dart';
+import 'package:meshtalk_app/features/chat/data/chat_session.dart';
 import 'package:meshtalk_app/features/chat/presentation/chat_screen.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
@@ -54,7 +55,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                 const Icon(Icons.error_outline, size: 48),
                 const SizedBox(height: 12),
                 const Text(
-                  'MeshTalk could not initialize the nearby chat session.',
+                  'MeshTalk could not initialize the encrypted nearby chat session.',
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 12),
@@ -78,6 +79,17 @@ class _ChatPageState extends ConsumerState<ChatPage>
             onOpenSettings: session.openSettings,
             onApprovePeer: session.approvePeer,
             onRejectPeer: session.rejectPeer,
+            onExportRoomCode: () {
+              return ref.read(secureRoomStoreProvider).exportActiveRoomCode();
+            },
+            onCreateRoom: (name) async {
+              await ref.read(secureRoomStoreProvider).createRoom(name);
+              await _restartForRoomChange(session);
+            },
+            onJoinRoom: (code) async {
+              await ref.read(secureRoomStoreProvider).importRoomCode(code);
+              await _restartForRoomChange(session);
+            },
             onUpdateDisplayName: (displayName) async {
               await ref
                   .read(profileStoreProvider)
@@ -90,5 +102,11 @@ class _ChatPageState extends ConsumerState<ChatPage>
         },
       ),
     );
+  }
+
+  Future<void> _restartForRoomChange(ChatSession session) async {
+    await session.close();
+    ref.invalidate(activeSecureRoomProvider);
+    ref.invalidate(chatSessionProvider);
   }
 }

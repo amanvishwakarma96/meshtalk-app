@@ -51,5 +51,30 @@ permissions = """    <uses-permission android:maxSdkVersion="31" android:name="a
 """
 marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
 text = text.replace(marker, marker + "\n" + permissions, 1)
+
+text = re.sub(
+    r'android:allowBackup="[^"]*"',
+    'android:allowBackup="false"',
+    text,
+)
+text = re.sub(
+    r'android:fullBackupContent="[^"]*"',
+    'android:fullBackupContent="false"',
+    text,
+)
+application_match = re.search(r'<application\b', text)
+if application_match is None:
+    raise SystemExit("Android application element was not found.")
+application_end = text.find('>', application_match.start())
+application_tag = text[application_match.start():application_end]
+attributes = []
+if 'android:allowBackup=' not in application_tag:
+    attributes.append('android:allowBackup="false"')
+if 'android:fullBackupContent=' not in application_tag:
+    attributes.append('android:fullBackupContent="false"')
+if attributes:
+    insertion = '<application ' + ' '.join(attributes)
+    text = text[:application_match.start()] + insertion + text[application_match.end():]
+
 manifest.write_text(text)
 PY
