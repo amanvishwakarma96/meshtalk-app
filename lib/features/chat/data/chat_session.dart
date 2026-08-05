@@ -9,8 +9,10 @@ import 'package:meshtalk_app/core/profile/local_profile.dart';
 import 'package:meshtalk_app/core/storage/message_store.dart';
 import 'package:meshtalk_app/core/storage/stored_chat_message.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
+import 'package:meshtalk_app/core/transport/peer_verification.dart';
 import 'package:meshtalk_app/core/transport/transport_manager.dart';
 import 'package:meshtalk_app/features/chat/domain/chat_session_state.dart';
+import 'package:meshtalk_app/features/chat/domain/transport_diagnostics.dart';
 import 'package:uuid/uuid.dart';
 
 typedef OpenAppSettings = Future<void> Function();
@@ -47,10 +49,17 @@ class ChatSession extends ChangeNotifier {
       <StreamSubscription<Object?>>[];
   final Map<String, List<NearbyPeer>> _peersByTransportId =
       <String, List<NearbyPeer>>{};
+  final Map<String, PeerVerificationTransport> _verificationTransports =
+      <String, PeerVerificationTransport>{};
+  final Map<String, List<PeerVerificationRequest>>
+      _verificationRequestsByTransportId =
+      <String, List<PeerVerificationRequest>>{};
 
   ChatSessionState _state;
   bool _initialized = false;
   bool _refreshing = false;
+  bool _refreshAgain = false;
+  bool _requestAuthorizationAgain = false;
   bool _closed = false;
 
   ChatSessionState get state => _state;
@@ -75,6 +84,7 @@ class ChatSession extends ChangeNotifier {
     _replaceState(
       _state.copyWith(
         messages: history.map(_toTimelineMessage).toList(growable: false),
+        diagnostics: TransportDiagnosticsSnapshot.initial(_radio.availability),
       ),
     );
 
@@ -92,6 +102,20 @@ class ChatSession extends ChangeNotifier {
           ),
         )
         ..add(transport.incomingMessages.listen(_handleIncomingMessage));
+
+      if (transport is PeerVerificationTransport) {
+        _verificationTransports[transport.id] = transport;
+        _verificationRequestsByTransportId[transport.id] =
+            transport.currentVerificationRequests;
+        _subscriptions.add(
+          transport.verificationRequests.listen(
+            (requests) => _handleVerificationRequests(
+              transport.id,
+              requests,
+            ),
+          ),
+        );
+      }
     }
     _subscriptions
       ..add(
@@ -113,7 +137,39 @@ class ChatSession extends ChangeNotifier {
     await _refreshTransport(requestAuthorization: true);
   }
 
+  Future<void> onAppResumed() async {
+    await _refreshTransport();
+  }
+
   Future<void> openSettings() => _openAppSettings();
+
+  Future<void> approvePeer(PeerVerificationRequest request) async {
+    final transport = _verificationTransports[request.transportId];
+    if (transport == null) {
+      throw StateError('The verification transport is no longer available.');
+    }
+
+    try {
+      await transport.approvePeer(request.endpointId);
+    } catch (error) {
+      _recordTransportError(error);
+      rethrow;
+    }
+  }
+
+  Future<void> rejectPeer(PeerVerificationRequest request) async {
+    final transport = _verificationTransports[request.transportId];
+    if (transport == null) {
+      return;
+    }
+
+    try {
+      await transport.rejectPeer(request.endpointId);
+    } catch (error) {
+      _recordTransportError(error);
+      rethrow;
+    }
+  }
 
   Future<void> send(String rawText) async {
     final text = rawText.trim();
@@ -149,7 +205,8 @@ class ChatSession extends ChangeNotifier {
 
     try {
       await _transportManager.send(envelope);
-    } catch (_) {
+    } catch (error) {
+      _recordTransportError(error);
       // TransportManager keeps failed sends in memory while SQLite remains
       // the process-restart source of truth.
     }
@@ -185,6 +242,32 @@ class ChatSession extends ChangeNotifier {
     if (normalized.isNotEmpty && _transportManager.pendingCount > 0) {
       unawaited(_flushQueuedMessages());
     }
+  }
+
+  void _handleVerificationRequests(
+    String transportId,
+    List<PeerVerificationRequest> requests,
+  ) {
+    _verificationRequestsByTransportId[transportId] =
+        List<PeerVerificationRequest>.unmodifiable(requests);
+    final active = _transportManager.active;
+    if (active == null || active.id != transportId) {
+      return;
+    }
+
+    final activeRequests = _verificationRequestsFor(active.id);
+    final statusMessage = activeRequests.isEmpty
+        ? _searchingMessage(active, _transportManager.pendingCount)
+        : _verificationMessage(activeRequests.length);
+    _replaceState(
+      _state.copyWith(
+        statusMessage: _state.status == ChatConnectionStatus.scanning
+            ? statusMessage
+            : _state.statusMessage,
+        verificationRequests: activeRequests,
+        diagnostics: _diagnosticsForActive(active),
+      ),
+    );
   }
 
   void _handleActiveTransportChanged(ChatTransport? active) {
@@ -241,7 +324,8 @@ class ChatSession extends ChangeNotifier {
   Future<void> _relay(MessageEnvelope envelope) async {
     try {
       await _transportManager.send(envelope);
-    } catch (_) {
+    } catch (error) {
+      _recordTransportError(error);
       // Relay failures remain queued for the next active peer or transport.
     }
     _syncPendingCount();
@@ -257,10 +341,33 @@ class ChatSession extends ChangeNotifier {
   }
 
   Future<void> _refreshTransport({bool requestAuthorization = false}) async {
-    if (_refreshing || _closed) {
+    if (_closed) {
       return;
     }
+    if (_refreshing) {
+      _refreshAgain = true;
+      _requestAuthorizationAgain =
+          _requestAuthorizationAgain || requestAuthorization;
+      return;
+    }
+
     _refreshing = true;
+    var authorize = requestAuthorization;
+    try {
+      do {
+        _refreshAgain = false;
+        await _refreshTransportOnce(requestAuthorization: authorize);
+        authorize = _requestAuthorizationAgain;
+        _requestAuthorizationAgain = false;
+      } while (_refreshAgain && !_closed);
+    } finally {
+      _refreshing = false;
+    }
+  }
+
+  Future<void> _refreshTransportOnce({
+    required bool requestAuthorization,
+  }) async {
     try {
       if (requestAuthorization &&
           _radio.availability == BleRadioAvailability.unauthorized) {
@@ -281,6 +388,7 @@ class ChatSession extends ChangeNotifier {
       _applyActiveTransportState(
         active,
         _peersByTransportId[active.id] ?? const <NearbyPeer>[],
+        clearLastError: true,
       );
     } on TransportActivationException catch (error) {
       if (error.kind == TransportKind.localWifi &&
@@ -292,6 +400,8 @@ class ChatSession extends ChangeNotifier {
                 'Nearby devices permission is required for the Android fallback.',
             peers: const <NearbyPeer>[],
             pendingCount: _transportManager.pendingCount,
+            verificationRequests: const <PeerVerificationRequest>[],
+            diagnostics: _diagnosticsWithoutActive(error.message),
             clearActiveTransport: true,
           ),
         );
@@ -302,29 +412,34 @@ class ChatSession extends ChangeNotifier {
             statusMessage: error.message,
             peers: const <NearbyPeer>[],
             pendingCount: _transportManager.pendingCount,
+            verificationRequests: const <PeerVerificationRequest>[],
+            diagnostics: _diagnosticsWithoutActive(error.message),
             clearActiveTransport: true,
           ),
         );
       }
-    } catch (_) {
+    } catch (error) {
       final active = _transportManager.active;
       if (active != null) {
         _applyActiveTransportState(
           active,
           _peersByTransportId[active.id] ?? const <NearbyPeer>[],
+          lastError: error.toString(),
         );
       } else {
-        _applyNoTransportState(_radio.availability);
+        _applyNoTransportState(
+          _radio.availability,
+          lastError: error.toString(),
+        );
       }
-    } finally {
-      _refreshing = false;
     }
   }
 
   Future<void> _flushQueuedMessages() async {
     try {
       await _transportManager.refresh();
-    } catch (_) {
+    } catch (error) {
+      _recordTransportError(error);
       // Pending entries remain in both TransportManager and SQLite.
     }
     _syncPendingCount();
@@ -332,15 +447,20 @@ class ChatSession extends ChangeNotifier {
 
   void _applyActiveTransportState(
     ChatTransport transport,
-    List<NearbyPeer> peers,
-  ) {
+    List<NearbyPeer> peers, {
+    String? lastError,
+    bool clearLastError = false,
+  }) {
     final connected = peers.isNotEmpty;
+    final verificationRequests = _verificationRequestsFor(transport.id);
     final status = connected
         ? ChatConnectionStatus.connected
         : ChatConnectionStatus.scanning;
     final statusMessage = connected
         ? _connectedMessage(transport, peers.length)
-        : _searchingMessage(transport, _transportManager.pendingCount);
+        : verificationRequests.isNotEmpty
+            ? _verificationMessage(verificationRequests.length)
+            : _searchingMessage(transport, _transportManager.pendingCount);
     _replaceState(
       _state.copyWith(
         status: status,
@@ -348,11 +468,20 @@ class ChatSession extends ChangeNotifier {
         peers: List<NearbyPeer>.unmodifiable(peers),
         pendingCount: _transportManager.pendingCount,
         activeTransportKind: transport.kind,
+        verificationRequests: verificationRequests,
+        diagnostics: _diagnosticsForActive(
+          transport,
+          lastError: lastError,
+          clearLastError: clearLastError,
+        ),
       ),
     );
   }
 
-  void _applyNoTransportState(BleRadioAvailability availability) {
+  void _applyNoTransportState(
+    BleRadioAvailability availability, {
+    String? lastError,
+  }) {
     final (status, message) = switch (availability) {
       BleRadioAvailability.unsupported => (
           ChatConnectionStatus.unsupported,
@@ -377,6 +506,8 @@ class ChatSession extends ChangeNotifier {
         statusMessage: message,
         peers: const <NearbyPeer>[],
         pendingCount: _transportManager.pendingCount,
+        verificationRequests: const <PeerVerificationRequest>[],
+        diagnostics: _diagnosticsWithoutActive(lastError),
         clearActiveTransport: true,
       ),
     );
@@ -398,7 +529,9 @@ class ChatSession extends ChangeNotifier {
     final active = _transportManager.active;
     final statusMessage =
         _state.status == ChatConnectionStatus.scanning && active != null
-            ? _searchingMessage(active, pendingCount)
+            ? _state.verificationRequests.isNotEmpty
+                ? _verificationMessage(_state.verificationRequests.length)
+                : _searchingMessage(active, pendingCount)
             : _state.statusMessage;
     _replaceState(
       _state.copyWith(
@@ -408,12 +541,54 @@ class ChatSession extends ChangeNotifier {
     );
   }
 
+  void _recordTransportError(Object error) {
+    final active = _transportManager.active;
+    final diagnostics = active == null
+        ? _diagnosticsWithoutActive(error.toString())
+        : _diagnosticsForActive(active, lastError: error.toString());
+    _replaceState(_state.copyWith(diagnostics: diagnostics));
+  }
+
   List<NearbyPeer> get _activePeers {
     final active = _transportManager.active;
     if (active == null) {
       return const <NearbyPeer>[];
     }
     return _peersByTransportId[active.id] ?? const <NearbyPeer>[];
+  }
+
+  List<PeerVerificationRequest> _verificationRequestsFor(
+    String transportId,
+  ) {
+    return _verificationRequestsByTransportId[transportId] ??
+        const <PeerVerificationRequest>[];
+  }
+
+  TransportDiagnosticsSnapshot _diagnosticsForActive(
+    ChatTransport transport, {
+    String? lastError,
+    bool clearLastError = false,
+  }) {
+    final previousError = _state.diagnostics?.lastError;
+    return TransportDiagnosticsSnapshot(
+      bluetoothAvailability: _radio.availability,
+      refreshedAtUtc: DateTime.now().toUtc(),
+      activeTransportId: transport.id,
+      activeTransportKind: transport.kind,
+      activeTransportMaxPayloadBytes:
+          transport.capabilities.maxPayloadBytes,
+      lastError: clearLastError ? null : lastError ?? previousError,
+    );
+  }
+
+  TransportDiagnosticsSnapshot _diagnosticsWithoutActive(
+    String? lastError,
+  ) {
+    return TransportDiagnosticsSnapshot(
+      bluetoothAvailability: _radio.availability,
+      refreshedAtUtc: DateTime.now().toUtc(),
+      lastError: lastError ?? _state.diagnostics?.lastError,
+    );
   }
 
   String _searchingMessage(ChatTransport transport, int pendingCount) {
@@ -429,12 +604,16 @@ class ChatSession extends ChangeNotifier {
     };
   }
 
+  String _verificationMessage(int count) {
+    return '$count nearby peer${count == 1 ? '' : 's'} waiting for code verification.';
+  }
+
   String _connectedMessage(ChatTransport transport, int peerCount) {
     final peerLabel = '$peerCount nearby peer${peerCount == 1 ? '' : 's'}';
     return switch (transport.kind) {
       TransportKind.bleMesh => 'Connected to $peerLabel over BLE.',
       TransportKind.localWifi =>
-        'Connected to $peerLabel using the unverified Android Nearby fallback.',
+        'Connected to $peerLabel over verified Android Nearby.',
       TransportKind.internetRelay =>
         'Connected to $peerLabel through an internet relay.',
     };
