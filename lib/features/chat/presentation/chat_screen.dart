@@ -314,12 +314,11 @@ class _ConnectionCard extends StatelessWidget {
       ChatConnectionStatus.localNetworkPermissionDenied => Icons.wifi_off,
       ChatConnectionStatus.bluetoothOff => Icons.bluetooth_disabled,
       ChatConnectionStatus.unsupported => Icons.phonelink_erase,
-      ChatConnectionStatus.scanning =>
-        state.verificationRequests.isNotEmpty
-            ? Icons.verified_user_outlined
-            : state.activeTransportKind == TransportKind.localWifi
-                ? Icons.wifi_find
-                : Icons.bluetooth_searching,
+      ChatConnectionStatus.scanning => state.verificationRequests.isNotEmpty
+          ? Icons.verified_user_outlined
+          : state.activeTransportKind == TransportKind.localWifi
+              ? Icons.wifi_find
+              : Icons.bluetooth_searching,
       ChatConnectionStatus.connected =>
         state.activeTransportKind == TransportKind.localWifi
             ? Icons.verified_user
@@ -364,8 +363,7 @@ class _PeerVerificationCard extends StatefulWidget {
   final PeerVerificationAction onReject;
 
   @override
-  State<_PeerVerificationCard> createState() =>
-      _PeerVerificationCardState();
+  State<_PeerVerificationCard> createState() => _PeerVerificationCardState();
 }
 
 class _PeerVerificationCardState extends State<_PeerVerificationCard> {

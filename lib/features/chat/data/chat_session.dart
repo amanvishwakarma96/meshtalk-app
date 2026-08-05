@@ -575,8 +575,7 @@ class ChatSession extends ChangeNotifier {
       refreshedAtUtc: DateTime.now().toUtc(),
       activeTransportId: transport.id,
       activeTransportKind: transport.kind,
-      activeTransportMaxPayloadBytes:
-          transport.capabilities.maxPayloadBytes,
+      activeTransportMaxPayloadBytes: transport.capabilities.maxPayloadBytes,
       lastError: clearLastError ? null : lastError ?? previousError,
     );
   }

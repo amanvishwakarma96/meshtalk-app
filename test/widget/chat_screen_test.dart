@@ -330,8 +330,7 @@ ChatSessionState _state({
     diagnostics: TransportDiagnosticsSnapshot(
       bluetoothAvailability: BleRadioAvailability.ready,
       refreshedAtUtc: DateTime.utc(2026, 8, 5, 9),
-      activeTransportId:
-          localWifi ? 'android-nearby' : 'fake-ble',
+      activeTransportId: localWifi ? 'android-nearby' : 'fake-ble',
       activeTransportKind: transportKind,
       activeTransportMaxPayloadBytes: localWifi ? 32 * 1024 : 64,
     ),
