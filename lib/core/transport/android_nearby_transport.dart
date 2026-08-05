@@ -40,8 +40,7 @@ class AndroidNearbyTransport
       StreamController<MessageEnvelope>.broadcast();
   final StreamController<List<NearbyPeer>> _nearbyPeers =
       StreamController<List<NearbyPeer>>.broadcast();
-  final StreamController<List<PeerVerificationRequest>>
-      _verificationRequests =
+  final StreamController<List<PeerVerificationRequest>> _verificationRequests =
       StreamController<List<PeerVerificationRequest>>.broadcast();
   final Map<String, NearbyEndpointIdentity> _knownEndpoints =
       <String, NearbyEndpointIdentity>{};
@@ -181,7 +180,8 @@ class AndroidNearbyTransport
   Future<void> approvePeer(String endpointId) async {
     final request = _pendingVerifications[endpointId];
     if (!_started || request == null) {
-      throw StateError('The Nearby peer verification request is no longer active.');
+      throw StateError(
+          'The Nearby peer verification request is no longer active.');
     }
     if (!_acceptedEndpointIds.add(endpointId)) {
       return;
