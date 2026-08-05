@@ -56,6 +56,18 @@ class _TransportDiagnosticsDialogState
               label: 'Session',
               value: _sessionLabel(widget.state.status),
             ),
+            const _DiagnosticRow(
+              label: 'Encryption',
+              value: 'XChaCha20-Poly1305 group E2EE',
+            ),
+            _DiagnosticRow(
+              label: 'Secure room',
+              value: widget.state.secureRoom.name,
+            ),
+            _DiagnosticRow(
+              label: 'Key fingerprint',
+              value: widget.state.secureRoom.fingerprint,
+            ),
             _DiagnosticRow(
               label: 'Active transport',
               value: _transportLabel(
@@ -96,7 +108,7 @@ class _TransportDiagnosticsDialogState
             ),
             const SizedBox(height: 8),
             Text(
-              'Last transport error',
+              'Last transport or encryption error',
               style: Theme.of(context).textTheme.labelLarge,
             ),
             const SizedBox(height: 4),
