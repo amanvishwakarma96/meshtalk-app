@@ -6,6 +6,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:meshtalk_app/core/ble/ble_mesh_radio.dart';
 import 'package:meshtalk_app/core/ble/message_envelope.dart';
 import 'package:meshtalk_app/core/profile/local_profile.dart';
+import 'package:meshtalk_app/core/security/message_protector.dart';
+import 'package:meshtalk_app/core/security/secure_room.dart';
+import 'package:meshtalk_app/core/security/secure_room_code_codec.dart';
 import 'package:meshtalk_app/core/storage/stored_chat_message.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
 import 'package:meshtalk_app/core/transport/peer_verification.dart';
@@ -23,10 +26,12 @@ void main() {
   late FakeVerifiableChatTransport fallbackTransport;
   FakeDiagnosticChatTransport? diagnosticTransport;
   late FakeMessageStore messageStore;
+  late SecureRoom secureRoom;
+  late MessageProtector protector;
   late ChatSession session;
   var settingsOpened = false;
 
-  setUp(() {
+  setUp(() async {
     radio = FakeBleRadio();
     transport = FakeChatTransport(radio);
     fallbackTransport = FakeVerifiableChatTransport(
@@ -36,19 +41,17 @@ void main() {
     );
     diagnosticTransport = null;
     messageStore = FakeMessageStore();
+    protector = MessageProtector();
+    secureRoom = await _secureRoom();
     settingsOpened = false;
-    session = ChatSession(
-      profile: const LocalProfile(
-        deviceId: 'device-local',
-        displayName: 'Trail Phone',
-      ),
+    session = _session(
       radio: radio,
-      bleTransport: transport,
-      transportManager: TransportManager(
-        transports: <ChatTransport>[transport, fallbackTransport],
-      ),
-      messageStore: messageStore,
-      openAppSettings: () async {
+      transport: transport,
+      fallback: fallbackTransport,
+      store: messageStore,
+      room: secureRoom,
+      protector: protector,
+      openSettings: () async {
         settingsOpened = true;
       },
     );
@@ -62,8 +65,7 @@ void main() {
     await radio.close();
   });
 
-  test('persists queued sends and marks them sent after peer recovery',
-      () async {
+  test('persists ciphertext and marks it sent after peer recovery', () async {
     await session.initialize();
     await session.send(' hello mesh ');
 
@@ -71,6 +73,16 @@ void main() {
     expect(
       messageStore.messages.single.deliveryStatus,
       StoredDeliveryStatus.queued,
+    );
+    expect(
+      protector.isProtectedPayload(
+        messageStore.messages.single.envelope.payload,
+      ),
+      isTrue,
+    );
+    expect(
+      session.state.messages.single.protectionStatus,
+      MessageProtectionStatus.endToEndEncrypted,
     );
 
     transport.emitPeers(
@@ -89,11 +101,14 @@ void main() {
       messageStore.messages.single.deliveryStatus,
       StoredDeliveryStatus.sent,
     );
-    expect(transport.sentMessages.single.payload, utf8.encode('hello mesh'));
+    final decrypted = await protector.unprotect(
+      envelope: transport.sentMessages.single,
+      room: secureRoom,
+    );
+    expect(utf8.decode(decrypted.clearText), 'hello mesh');
   });
 
-  test('restores history and resumes persisted queued outbound messages',
-      () async {
+  test('migrates legacy queued plaintext before restoring delivery', () async {
     final queuedEnvelope = MessageEnvelope(
       id: '550e8400-e29b-41d4-a716-446655440001',
       senderId: 'device-local',
@@ -114,7 +129,18 @@ void main() {
     await session.initialize();
 
     expect(session.state.messages.single.text, 'survive restart');
+    expect(
+      session.state.messages.single.protectionStatus,
+      MessageProtectionStatus.legacyUnencrypted,
+    );
     expect(session.state.pendingCount, 1);
+    expect(messageStore.messages.single.envelope.roomId, secureRoom.id);
+    expect(
+      protector.isProtectedPayload(
+        messageStore.messages.single.envelope.payload,
+      ),
+      isTrue,
+    );
 
     transport.emitPeers(
       const <NearbyPeer>[
@@ -123,15 +149,18 @@ void main() {
     );
     await _drainEvents();
 
-    expect(transport.sentMessages.single.id, queuedEnvelope.id);
-    expect(session.state.pendingCount, 0);
-    expect(
-      messageStore.messages.single.deliveryStatus,
-      StoredDeliveryStatus.sent,
+    final sent = transport.sentMessages.single;
+    expect(sent.id, queuedEnvelope.id);
+    expect(sent.roomId, secureRoom.id);
+    final decrypted = await protector.unprotect(
+      envelope: sent,
+      room: secureRoom,
     );
+    expect(utf8.decode(decrypted.clearText), 'survive restart');
+    expect(session.state.pendingCount, 0);
   });
 
-  test('persists and relays a new incoming message exactly once', () async {
+  test('persists and relays authenticated incoming ciphertext once', () async {
     await session.initialize();
     transport.emitPeers(
       const <NearbyPeer>[
@@ -139,13 +168,13 @@ void main() {
       ],
     );
     await _drainEvents();
-    final incoming = MessageEnvelope(
+    final incoming = await _protectedEnvelope(
+      protector: protector,
+      room: secureRoom,
       id: '550e8400-e29b-41d4-a716-446655440000',
       senderId: 'remote-device',
-      roomId: 'nearby',
-      timestampUtc: DateTime.utc(2026, 8, 4),
+      text: 'from peer',
       hopLimit: 2,
-      payload: Uint8List.fromList(utf8.encode('from peer')),
     );
 
     transport.emitIncoming(incoming);
@@ -153,11 +182,81 @@ void main() {
     await _drainEvents();
 
     expect(session.state.messages.single.text, 'from peer');
+    expect(
+      session.state.messages.single.protectionStatus,
+      MessageProtectionStatus.endToEndEncrypted,
+    );
     expect(messageStore.messages.length, 1);
     expect(
       messageStore.messages.single.deliveryStatus,
       StoredDeliveryStatus.received,
     );
+    expect(
+      protector.isProtectedPayload(
+        messageStore.messages.single.envelope.payload,
+      ),
+      isTrue,
+    );
+    expect(transport.sentMessages.single.hopLimit, 1);
+    final relayed = await protector.unprotect(
+      envelope: transport.sentMessages.single,
+      room: secureRoom,
+    );
+    expect(utf8.decode(relayed.clearText), 'from peer');
+  });
+
+  test('drops tampered ciphertext and records an encryption error', () async {
+    await session.initialize();
+    final incoming = await _protectedEnvelope(
+      protector: protector,
+      room: secureRoom,
+      id: '550e8400-e29b-41d4-a716-446655440099',
+      senderId: 'remote-device',
+      text: 'do not display',
+      hopLimit: 1,
+    );
+    final changed = Uint8List.fromList(incoming.payload);
+    changed[changed.length - 1] ^= 0x01;
+
+    transport.emitIncoming(incoming.copyWith(payload: changed));
+    await _drainEvents();
+
+    expect(session.state.messages, isEmpty);
+    expect(messageStore.messages, isEmpty);
+    expect(
+      session.state.diagnostics?.lastError,
+      contains('authentication failed'),
+    );
+  });
+
+  test('relays encrypted messages for another room without displaying them',
+      () async {
+    await session.initialize();
+    transport.emitPeers(
+      const <NearbyPeer>[
+        NearbyPeer(id: 'peer-a', displayName: 'Peer A'),
+      ],
+    );
+    await _drainEvents();
+    final otherRoom = await _secureRoom(
+      roomId: 'anotherSecureRoom1234567',
+      keyOffset: 40,
+    );
+    final incoming = await _protectedEnvelope(
+      protector: protector,
+      room: otherRoom,
+      id: '550e8400-e29b-41d4-a716-446655440088',
+      senderId: 'remote-device',
+      text: 'relay only',
+      hopLimit: 2,
+    );
+
+    transport.emitIncoming(incoming);
+    await _drainEvents();
+
+    expect(session.state.messages, isEmpty);
+    expect(messageStore.messages, isEmpty);
+    expect(transport.sentMessages.single.id, incoming.id);
     expect(transport.sentMessages.single.hopLimit, 1);
   });
 
@@ -203,10 +302,9 @@ void main() {
     );
     final iosFallback = diagnosticTransport!;
     session = ChatSession(
-      profile: const LocalProfile(
-        deviceId: 'device-local',
-        displayName: 'Trail Phone',
-      ),
+      profile: _profile,
+      secureRoom: secureRoom,
+      messageProtector: protector,
       radio: radio,
       bleTransport: transport,
       transportManager: TransportManager(
@@ -289,7 +387,7 @@ void main() {
     expect(session.state.verificationRequests, isEmpty);
   });
 
-  test('records active transport diagnostics', () async {
+  test('records active transport and encrypted room diagnostics', () async {
     await session.initialize();
 
     final diagnostics = session.state.diagnostics;
@@ -299,6 +397,8 @@ void main() {
     expect(diagnostics.bluetoothAvailability, BleRadioAvailability.ready);
     expect(diagnostics.activeTransportMaxPayloadBytes, 64);
     expect(diagnostics.lastError, isNull);
+    expect(session.state.secureRoom.id, secureRoom.id);
+    expect(session.state.secureRoom.keyId, secureRoom.keyId);
   });
 
   test('refreshes transport availability when the app resumes', () async {
@@ -310,8 +410,7 @@ void main() {
     expect(transport.availabilityChecks, greaterThan(checksBeforeResume));
   });
 
-  test('flushes the durable queue through the Android Nearby fallback',
-      () async {
+  test('flushes encrypted queue through Android Nearby fallback', () async {
     radio.currentAvailability = BleRadioAvailability.poweredOff;
     fallbackTransport.forcedAvailability = true;
     await session.initialize();
@@ -326,10 +425,11 @@ void main() {
     );
     await _drainEvents();
 
-    expect(
-      fallbackTransport.sentMessages.single.payload,
-      utf8.encode('fallback delivery'),
+    final decrypted = await protector.unprotect(
+      envelope: fallbackTransport.sentMessages.single,
+      room: secureRoom,
     );
+    expect(utf8.decode(decrypted.clearText), 'fallback delivery');
     expect(session.state.pendingCount, 0);
     expect(
       messageStore.messages.single.deliveryStatus,
@@ -356,6 +456,73 @@ void main() {
     expect(session.state.status, ChatConnectionStatus.scanning);
     expect(fallbackTransport.connected, isFalse);
   });
+}
+
+const LocalProfile _profile = LocalProfile(
+  deviceId: 'device-local',
+  displayName: 'Trail Phone',
+);
+
+ChatSession _session({
+  required FakeBleRadio radio,
+  required FakeChatTransport transport,
+  required FakeChatTransport fallback,
+  required FakeMessageStore store,
+  required SecureRoom room,
+  required MessageProtector protector,
+  required Future<void> Function() openSettings,
+}) {
+  return ChatSession(
+    profile: _profile,
+    secureRoom: room,
+    messageProtector: protector,
+    radio: radio,
+    bleTransport: transport,
+    transportManager: TransportManager(
+      transports: <ChatTransport>[transport, fallback],
+    ),
+    messageStore: store,
+    openAppSettings: openSettings,
+  );
+}
+
+Future<SecureRoom> _secureRoom({
+  String roomId = 'secureRoomIdentifier1234',
+  int keyOffset = 0,
+}) async {
+  final key = Uint8List.fromList(
+    List<int>.generate(32, (index) => (index + keyOffset) % 256),
+  );
+  final codec = SecureRoomCodeCodec();
+  return SecureRoom(
+    id: roomId,
+    name: 'Family mesh',
+    keyId: await codec.deriveKeyId(key),
+    keyBytes: key,
+    createdAtUtc: DateTime.utc(2026, 8, 5),
+  );
+}
+
+Future<MessageEnvelope> _protectedEnvelope({
+  required MessageProtector protector,
+  required SecureRoom room,
+  required String id,
+  required String senderId,
+  required String text,
+  required int hopLimit,
+}) {
+  return protector.protect(
+    envelope: MessageEnvelope(
+      id: id,
+      senderId: senderId,
+      roomId: room.id,
+      timestampUtc: DateTime.utc(2026, 8, 5, 12),
+      hopLimit: hopLimit,
+      payload: Uint8List(0),
+    ),
+    clearText: Uint8List.fromList(utf8.encode(text)),
+    room: room,
+  );
 }
 
 Future<void> _drainEvents() async {
