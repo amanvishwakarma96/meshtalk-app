@@ -124,8 +124,7 @@ class ChatSessionState {
       activeTransportKind: clearActiveTransport
           ? null
           : activeTransportKind ?? this.activeTransportKind,
-      verificationRequests:
-          verificationRequests ?? this.verificationRequests,
+      verificationRequests: verificationRequests ?? this.verificationRequests,
       diagnostics: diagnostics ?? this.diagnostics,
     );
   }
