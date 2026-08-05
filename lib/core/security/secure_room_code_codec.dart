@@ -31,7 +31,8 @@ class SecureRoomCodeCodec {
     final nameText = parts[3];
     final suppliedChecksum = parts[4];
     if (!RegExp(r'^[A-Za-z0-9_-]{16,64}$').hasMatch(roomId)) {
-      throw const FormatException('Secure room code contains an invalid room ID.');
+      throw const FormatException(
+          'Secure room code contains an invalid room ID.');
     }
 
     final canonical = '$_prefix|$roomId|$keyText|$nameText';
