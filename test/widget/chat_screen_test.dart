@@ -246,7 +246,11 @@ void main() {
       find.byKey(const ValueKey<String>('room-name-input')),
       'Private family',
     );
-    await tester.tap(find.byKey(const ValueKey<String>('create-room-button')));
+    final createButton =
+        find.byKey(const ValueKey<String>('create-room-button'));
+    await tester.ensureVisible(createButton);
+    await tester.pumpAndSettle();
+    await tester.tap(createButton);
     await tester.pumpAndSettle();
 
     expect(roomName, 'Private family');
