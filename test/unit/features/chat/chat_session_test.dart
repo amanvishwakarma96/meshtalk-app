@@ -21,6 +21,7 @@ void main() {
   late FakeBleRadio radio;
   late FakeChatTransport transport;
   late FakeVerifiableChatTransport fallbackTransport;
+  FakeDiagnosticChatTransport? diagnosticTransport;
   late FakeMessageStore messageStore;
   late ChatSession session;
   var settingsOpened = false;
@@ -30,8 +31,10 @@ void main() {
     transport = FakeChatTransport(radio);
     fallbackTransport = FakeVerifiableChatTransport(
       radio,
+      transportId: 'android-nearby',
       forcedAvailability: false,
     );
+    diagnosticTransport = null;
     messageStore = FakeMessageStore();
     settingsOpened = false;
     session = ChatSession(
@@ -53,6 +56,7 @@ void main() {
 
   tearDown(() async {
     await session.close();
+    await diagnosticTransport?.close();
     await transport.close();
     await fallbackTransport.close();
     await radio.close();
@@ -192,11 +196,12 @@ void main() {
   test('labels iOS Multipeer and records native runtime errors', () async {
     await session.close();
     radio.currentAvailability = BleRadioAvailability.poweredOff;
-    final iosFallback = FakeDiagnosticChatTransport(
+    diagnosticTransport = FakeDiagnosticChatTransport(
       radio,
       transportId: 'ios-multipeer',
       forcedAvailability: true,
     );
+    final iosFallback = diagnosticTransport!;
     session = ChatSession(
       profile: const LocalProfile(
         deviceId: 'device-local',
@@ -227,7 +232,6 @@ void main() {
       session.state.statusMessage,
       'iOS local-network discovery stopped.',
     );
-    await iosFallback.close();
   });
 
   test('routes matching-code approval to the active verification transport',
@@ -236,7 +240,7 @@ void main() {
     fallbackTransport.forcedAvailability = true;
     await session.initialize();
     const request = PeerVerificationRequest(
-      transportId: 'fake-android-nearby',
+      transportId: 'android-nearby',
       endpointId: 'endpoint-a',
       peerId: 'peer-a',
       displayName: 'Peer A',
@@ -268,7 +272,7 @@ void main() {
     fallbackTransport.forcedAvailability = true;
     await session.initialize();
     const request = PeerVerificationRequest(
-      transportId: 'fake-android-nearby',
+      transportId: 'android-nearby',
       endpointId: 'endpoint-b',
       peerId: 'peer-b',
       displayName: 'Peer B',
