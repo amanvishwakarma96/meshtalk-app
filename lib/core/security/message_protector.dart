@@ -8,6 +8,7 @@ import 'package:meshtalk_app/core/security/secure_room.dart';
 enum MessageProtectionStatus {
   endToEndEncrypted,
   legacyUnencrypted,
+  unableToDecrypt,
 }
 
 enum MessageProtectionFailure {
