@@ -181,7 +181,8 @@ class AndroidNearbyTransport
     final request = _pendingVerifications[endpointId];
     if (!_started || request == null) {
       throw StateError(
-          'The Nearby peer verification request is no longer active.');
+        'The Nearby peer verification request is no longer active.',
+      );
     }
     if (!_acceptedEndpointIds.add(endpointId)) {
       return;

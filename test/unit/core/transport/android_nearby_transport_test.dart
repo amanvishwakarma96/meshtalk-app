@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -395,9 +394,7 @@ class FakeNearbyConnectionsGateway implements NearbyConnectionsGateway {
 
   NearbyConnectionInitiated? _onConnectionInitiated;
   NearbyConnectionResultCallback? _onConnectionResult;
-  NearbyDisconnected? _onDisconnected;
   NearbyEndpointFound? _onEndpointFound;
-  NearbyEndpointLost? _onEndpointLost;
 
   @override
   bool get isSupported => true;
@@ -418,7 +415,6 @@ class FakeNearbyConnectionsGateway implements NearbyConnectionsGateway {
     advertisedServiceId = serviceId;
     _onConnectionInitiated = onConnectionInitiated;
     _onConnectionResult = onConnectionResult;
-    _onDisconnected = onDisconnected;
     return advertisingResult;
   }
 
@@ -432,7 +428,6 @@ class FakeNearbyConnectionsGateway implements NearbyConnectionsGateway {
     startDiscoveryCalls += 1;
     discoveredServiceId = serviceId;
     _onEndpointFound = onEndpointFound;
-    _onEndpointLost = onEndpointLost;
     return discoveryResult;
   }
 
@@ -447,7 +442,6 @@ class FakeNearbyConnectionsGateway implements NearbyConnectionsGateway {
     requestedEndpointIds.add(endpointId);
     _onConnectionInitiated = onConnectionInitiated;
     _onConnectionResult = onConnectionResult;
-    _onDisconnected = onDisconnected;
     return requestResult;
   }
 

@@ -104,11 +104,12 @@ class ChatSession extends ChangeNotifier {
         ..add(transport.incomingMessages.listen(_handleIncomingMessage));
 
       if (transport is PeerVerificationTransport) {
-        _verificationTransports[transport.id] = transport;
+        final verificationTransport = transport as PeerVerificationTransport;
+        _verificationTransports[transport.id] = verificationTransport;
         _verificationRequestsByTransportId[transport.id] =
-            transport.currentVerificationRequests;
+            verificationTransport.currentVerificationRequests;
         _subscriptions.add(
-          transport.verificationRequests.listen(
+          verificationTransport.verificationRequests.listen(
             (requests) => _handleVerificationRequests(
               transport.id,
               requests,
