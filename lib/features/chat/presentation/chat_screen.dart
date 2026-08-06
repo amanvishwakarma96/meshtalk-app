@@ -634,11 +634,13 @@ class _MessageTile extends StatelessWidget {
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 2),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
+                Wrap(
+                  alignment:
+                      outgoing ? WrapAlignment.end : WrapAlignment.start,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 3,
                   children: <Widget>[
                     Icon(protection.$1, size: 13),
-                    const SizedBox(width: 3),
                     Text(
                       protection.$2,
                       key: ValueKey<String>('message-protection-${message.id}'),
