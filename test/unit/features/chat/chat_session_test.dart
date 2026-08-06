@@ -48,6 +48,8 @@ void main() {
     messageStore = FakeMessageStore();
     protector = MessageProtector();
     secureRoom = await _secureRoom();
+    protectorForHelper = protector;
+    secureRoomForHelper = secureRoom;
     localIdentity = await _identity(_profile.deviceId);
     remoteIdentity = await _identity('remote-device');
     changedRemoteIdentity = await _identity('remote-device');
@@ -81,8 +83,10 @@ void main() {
     await session.send(' hello mesh ');
 
     expect(session.state.pendingCount, 1);
-    expect(messageStore.messages.single.deliveryStatus,
-        StoredDeliveryStatus.queued);
+    expect(
+      messageStore.messages.single.deliveryStatus,
+      StoredDeliveryStatus.queued,
+    );
     final queued = messageStore.messages.single.envelope;
     expect(protector.isSignedProtectedPayload(queued.payload), isTrue);
     expect(
@@ -96,8 +100,8 @@ void main() {
     await _drainEvents();
 
     expect(session.state.pendingCount, 0);
-    expect(session.state.messages.single.deliveryStatus,
-        ChatDeliveryStatus.sent);
+    expect(
+        session.state.messages.single.deliveryStatus, ChatDeliveryStatus.sent);
     final decrypted = await protector.unprotect(
       envelope: transport.sentMessages.single,
       room: secureRoom,
@@ -125,10 +129,14 @@ void main() {
     await session.initialize();
 
     expect(session.state.messages.single.text, 'survive restart');
-    expect(session.state.messages.single.protectionStatus,
-        MessageProtectionStatus.legacyUnencrypted);
-    expect(session.state.messages.single.identityStatus,
-        MessageIdentityStatus.legacyUnsigned);
+    expect(
+      session.state.messages.single.protectionStatus,
+      MessageProtectionStatus.legacyUnencrypted,
+    );
+    expect(
+      session.state.messages.single.identityStatus,
+      MessageIdentityStatus.legacyUnsigned,
+    );
     final migrated = messageStore.messages.single.envelope;
     expect(migrated.roomId, secureRoom.id);
     expect(protector.isSignedProtectedPayload(migrated.payload), isTrue);
@@ -166,12 +174,15 @@ void main() {
     await _drainEvents();
 
     expect(session.state.messages.single.text, 'from peer');
-    expect(session.state.messages.single.identityStatus,
-        MessageIdentityStatus.seen);
-    expect(session.state.trustedIdentities.single.keyId,
-        remoteIdentity.keyId);
-    expect(session.state.trustedIdentities.single.trustLevel,
-        IdentityTrustLevel.seen);
+    expect(
+      session.state.messages.single.identityStatus,
+      MessageIdentityStatus.seen,
+    );
+    expect(session.state.trustedIdentities.single.keyId, remoteIdentity.keyId);
+    expect(
+      session.state.trustedIdentities.single.trustLevel,
+      IdentityTrustLevel.seen,
+    );
     expect(messageStore.messages.length, 1);
     expect(transport.sentMessages.single.hopLimit, 1);
   });
@@ -198,10 +209,14 @@ void main() {
     await _drainEvents();
 
     expect(session.state.messages.last.text, 'verified');
-    expect(session.state.messages.last.identityStatus,
-        MessageIdentityStatus.verified);
-    expect(session.state.trustedIdentities.single.trustLevel,
-        IdentityTrustLevel.verified);
+    expect(
+      session.state.messages.last.identityStatus,
+      MessageIdentityStatus.verified,
+    );
+    expect(
+      session.state.trustedIdentities.single.trustLevel,
+      IdentityTrustLevel.verified,
+    );
   });
 
   test('blocks a changed identity while still relaying its ciphertext',
@@ -230,8 +245,10 @@ void main() {
 
     expect(session.state.messages.length, 1);
     expect(session.state.pendingIdentityChanges.length, 1);
-    expect(session.state.pendingIdentityChanges.single.pendingKeyId,
-        changedRemoteIdentity.keyId);
+    expect(
+      session.state.pendingIdentityChanges.single.pendingKeyId,
+      changedRemoteIdentity.keyId,
+    );
     expect(session.state.diagnostics?.lastError, contains('Identity changed'));
     expect(transport.sentMessages.last.id, changed.id);
     expect(transport.sentMessages.last.hopLimit, 1);
@@ -262,11 +279,13 @@ void main() {
 
     expect(session.state.messages.length, 2);
     expect(session.state.messages.last.text, 'approved new key');
-    expect(session.state.messages.last.identityStatus,
-        MessageIdentityStatus.seen);
+    expect(
+        session.state.messages.last.identityStatus, MessageIdentityStatus.seen);
     expect(session.state.pendingIdentityChanges, isEmpty);
-    expect(session.state.trustedIdentities.single.keyId,
-        changedRemoteIdentity.keyId);
+    expect(
+      session.state.trustedIdentities.single.keyId,
+      changedRemoteIdentity.keyId,
+    );
   });
 
   test('rejecting a changed fingerprint keeps the old key pinned', () async {
@@ -292,8 +311,7 @@ void main() {
 
     expect(session.state.messages.length, 1);
     expect(session.state.pendingIdentityChanges, isEmpty);
-    expect(session.state.trustedIdentities.single.keyId,
-        remoteIdentity.keyId);
+    expect(session.state.trustedIdentities.single.keyId, remoteIdentity.keyId);
   });
 
   test('drops tampered signed ciphertext and records an identity error',
@@ -313,8 +331,8 @@ void main() {
 
     expect(session.state.messages, isEmpty);
     expect(messageStore.messages, isEmpty);
-    expect(session.state.diagnostics?.lastError,
-        contains('signature is invalid'));
+    expect(
+        session.state.diagnostics?.lastError, contains('signature is invalid'));
   });
 
   test('relays signed ciphertext for another room without trusting it',
