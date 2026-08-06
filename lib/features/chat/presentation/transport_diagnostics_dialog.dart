@@ -60,13 +60,29 @@ class _TransportDiagnosticsDialogState
               label: 'Encryption',
               value: 'XChaCha20-Poly1305 group E2EE',
             ),
+            const _DiagnosticRow(
+              label: 'Sender signatures',
+              value: 'Ed25519 protocol v2',
+            ),
             _DiagnosticRow(
               label: 'Secure room',
               value: widget.state.secureRoom.name,
             ),
             _DiagnosticRow(
-              label: 'Key fingerprint',
+              label: 'Room fingerprint',
               value: widget.state.secureRoom.fingerprint,
+            ),
+            _DiagnosticRow(
+              label: 'Local identity',
+              value: widget.state.localIdentity.fingerprint,
+            ),
+            _DiagnosticRow(
+              label: 'Pinned identities',
+              value: '${widget.state.trustedIdentities.length}',
+            ),
+            _DiagnosticRow(
+              label: 'Identity changes',
+              value: '${widget.state.pendingIdentityChanges.length}',
             ),
             _DiagnosticRow(
               label: 'Active transport',
@@ -108,7 +124,7 @@ class _TransportDiagnosticsDialogState
             ),
             const SizedBox(height: 8),
             Text(
-              'Last transport or encryption error',
+              'Last transport, encryption, or identity error',
               style: Theme.of(context).textTheme.labelLarge,
             ),
             const SizedBox(height: 4),
