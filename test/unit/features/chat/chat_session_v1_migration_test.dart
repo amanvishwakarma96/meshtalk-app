@@ -21,70 +21,72 @@ import '../../../helpers/fake_ble_chat.dart';
 import '../../../helpers/fake_message_store.dart';
 
 void main() {
-  test('re-signs queued version-1 ciphertext before transport restoration',
-      () async {
-    final room = await _room();
-    final identity = await _identity(_profile.deviceId);
-    final protector = MessageProtector();
-    final radio = FakeBleRadio();
-    final transport = FakeChatTransport(radio);
-    final store = FakeMessageStore();
-    final legacyEnvelope = await _legacyV1Envelope(
-      room: room,
-      clearText: 'queued from PR 9',
-    );
-    await store.upsert(
-      StoredChatMessage(
-        envelope: legacyEnvelope,
-        senderLabel: _profile.displayName,
-        direction: StoredMessageDirection.outgoing,
-        deliveryStatus: StoredDeliveryStatus.queued,
-      ),
-    );
-    final session = ChatSession(
-      profile: _profile,
-      secureRoom: room,
-      deviceIdentity: identity,
-      identityTrustStore: IdentityTrustStore(
-        values: _MemorySecureValueStore(),
-      ),
-      messageProtector: protector,
-      radio: radio,
-      bleTransport: transport,
-      transportManager: TransportManager(
-        transports: <ChatTransport>[transport],
-      ),
-      messageStore: store,
-      openAppSettings: () async {},
-    );
-
-    try {
-      await session.initialize();
-
-      expect(session.state.messages.single.text, 'queued from PR 9');
-      expect(
-        session.state.messages.single.protectionStatus,
-        MessageProtectionStatus.encryptedLegacyIdentity,
-      );
-      expect(
-        session.state.messages.single.identityStatus,
-        MessageIdentityStatus.legacyUnsigned,
-      );
-
-      final migrated = store.messages.single.envelope;
-      expect(protector.isSignedProtectedPayload(migrated.payload), isTrue);
-      final unprotected = await protector.unprotect(
-        envelope: migrated,
+  test(
+    're-signs queued version-1 ciphertext before transport restoration',
+    () async {
+      final room = await _room();
+      final identity = await _identity(_profile.deviceId);
+      final protector = MessageProtector();
+      final radio = FakeBleRadio();
+      final transport = FakeChatTransport(radio);
+      final store = FakeMessageStore();
+      final legacyEnvelope = await _legacyV1Envelope(
         room: room,
+        clearText: 'queued from PR 9',
       );
-      expect(utf8.decode(unprotected.clearText), 'queued from PR 9');
-      expect(unprotected.senderIdentity?.keyId, identity.keyId);
-    } finally {
-      await session.close();
-      await transport.close();
-      await radio.close();
-    }
-  });
+      await store.upsert(
+        StoredChatMessage(
+          envelope: legacyEnvelope,
+          senderLabel: _profile.displayName,
+          direction: StoredMessageDirection.outgoing,
+          deliveryStatus: StoredDeliveryStatus.queued,
+        ),
+      );
+      final session = ChatSession(
+        profile: _profile,
+        secureRoom: room,
+        deviceIdentity: identity,
+        identityTrustStore: IdentityTrustStore(
+          values: _MemorySecureValueStore(),
+        ),
+        messageProtector: protector,
+        radio: radio,
+        bleTransport: transport,
+        transportManager: TransportManager(
+          transports: <ChatTransport>[transport],
+        ),
+        messageStore: store,
+        openAppSettings: () async {},
+      );
+
+      try {
+        await session.initialize();
+
+        expect(session.state.messages.single.text, 'queued from PR 9');
+        expect(
+          session.state.messages.single.protectionStatus,
+          MessageProtectionStatus.encryptedLegacyIdentity,
+        );
+        expect(
+          session.state.messages.single.identityStatus,
+          MessageIdentityStatus.legacyUnsigned,
+        );
+
+        final migrated = store.messages.single.envelope;
+        expect(protector.isSignedProtectedPayload(migrated.payload), isTrue);
+        final unprotected = await protector.unprotect(
+          envelope: migrated,
+          room: room,
+        );
+        expect(utf8.decode(unprotected.clearText), 'queued from PR 9');
+        expect(unprotected.senderIdentity?.keyId, identity.keyId);
+      } finally {
+        await session.close();
+        await transport.close();
+        await radio.close();
+      }
+    },
+  );
 }
 
 const LocalProfile _profile = LocalProfile(
