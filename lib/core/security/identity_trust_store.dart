@@ -123,7 +123,8 @@ class IdentityTrustStore {
     final values = state.identities
         .map((identity) => identity.summary)
         .toList(growable: false)
-      ..sort((left, right) => right.lastSeenAtUtc.compareTo(left.lastSeenAtUtc));
+      ..sort(
+          (left, right) => right.lastSeenAtUtc.compareTo(left.lastSeenAtUtc));
     return List<TrustedIdentitySummary>.unmodifiable(values);
   }
 
@@ -201,11 +202,11 @@ class IdentityTrustStore {
       if (rawIdentities is! List<dynamic>) {
         throw const FormatException('Identity trust entries are malformed.');
       }
-      final identities = rawIdentities
-          .map(_identityFromJson)
-          .toList(growable: false);
+      final identities =
+          rawIdentities.map(_identityFromJson).toList(growable: false);
       if (identities.length > _maximumIdentities) {
-        throw const FormatException('Identity trust storage exceeds its limit.');
+        throw const FormatException(
+            'Identity trust storage exceeds its limit.');
       }
       return _IdentityTrustState(identities);
     } on FormatException catch (error) {
@@ -262,8 +263,7 @@ class IdentityTrustStore {
               (identity) => <String, Object?>{
                 'deviceId': identity.deviceId,
                 'keyId': identity.keyId,
-                'publicKey':
-                    _base64UrlWithoutPadding(identity.publicKeyBytes),
+                'publicKey': _base64UrlWithoutPadding(identity.publicKeyBytes),
                 'trustLevel': identity.trustLevel.name,
                 'firstSeenAtUtc':
                     identity.firstSeenAtUtc.toUtc().toIso8601String(),
