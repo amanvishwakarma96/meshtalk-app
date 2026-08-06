@@ -195,7 +195,8 @@ class _TrustedIdentitiesDialogState extends State<TrustedIdentitiesDialog> {
                   ),
                 ],
               ),
-            ] else if (identity.trustLevel == IdentityTrustLevel.seen) ...<Widget>[
+            ] else if (identity.trustLevel ==
+                IdentityTrustLevel.seen) ...<Widget>[
               const SizedBox(height: 8),
               Align(
                 alignment: Alignment.centerRight,
