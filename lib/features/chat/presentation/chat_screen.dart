@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:meshtalk_app/core/security/identity_trust_store.dart';
 import 'package:meshtalk_app/core/security/message_protector.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
 import 'package:meshtalk_app/core/transport/peer_verification.dart';
@@ -6,6 +7,7 @@ import 'package:meshtalk_app/features/chat/domain/chat_session_state.dart';
 import 'package:meshtalk_app/features/chat/presentation/profile_dialog.dart';
 import 'package:meshtalk_app/features/chat/presentation/secure_room_dialog.dart';
 import 'package:meshtalk_app/features/chat/presentation/transport_diagnostics_dialog.dart';
+import 'package:meshtalk_app/features/chat/presentation/trusted_identities_dialog.dart';
 
 typedef SendMessage = Future<void> Function(String text);
 typedef AsyncAction = Future<void> Function();
@@ -26,6 +28,9 @@ class ChatScreen extends StatefulWidget {
     required this.onExportRoomCode,
     required this.onCreateRoom,
     required this.onJoinRoom,
+    required this.onVerifyIdentity,
+    required this.onAcceptIdentityChange,
+    required this.onRejectIdentityChange,
     super.key,
   });
 
@@ -39,6 +44,9 @@ class ChatScreen extends StatefulWidget {
   final ExportSecureRoomCode onExportRoomCode;
   final CreateSecureRoom onCreateRoom;
   final JoinSecureRoom onJoinRoom;
+  final TrustedIdentityAction onVerifyIdentity;
+  final TrustedIdentityAction onAcceptIdentityChange;
+  final TrustedIdentityAction onRejectIdentityChange;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -76,6 +84,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final verificationRequests = widget.state.verificationRequests;
+    final identityChanges = widget.state.pendingIdentityChanges;
     return Scaffold(
       appBar: AppBar(
         title: const Text('MeshTalk'),
@@ -85,6 +94,18 @@ class _ChatScreenState extends State<ChatScreen> {
             onPressed: _showSecureRoom,
             tooltip: 'Encrypted room',
             icon: const Icon(Icons.lock_outline),
+          ),
+          IconButton(
+            key: const ValueKey<String>('trusted-identities-button'),
+            onPressed: _showIdentities,
+            tooltip: identityChanges.isEmpty
+                ? 'Device identities'
+                : '${identityChanges.length} identity change waiting',
+            icon: Icon(
+              identityChanges.isEmpty
+                  ? Icons.verified_user_outlined
+                  : Icons.gpp_maybe,
+            ),
           ),
           IconButton(
             key: const ValueKey<String>('diagnostics-button'),
@@ -127,13 +148,19 @@ class _ChatScreenState extends State<ChatScreen> {
               onApprove: widget.onApprovePeer,
               onReject: widget.onRejectPeer,
             ),
+          if (identityChanges.isNotEmpty)
+            _IdentityChangeCard(
+              identity: identityChanges.first,
+              additionalChangeCount: identityChanges.length - 1,
+              onOpen: _showIdentities,
+            ),
           Expanded(
             child: widget.state.messages.isEmpty
                 ? const Center(
                     child: Padding(
                       padding: EdgeInsets.all(24),
                       child: Text(
-                        'Encrypted nearby messages will appear here. Messages sent while scanning remain queued until a peer connects.',
+                        'Authenticated encrypted messages will appear here. Messages sent while scanning remain queued until a peer connects.',
                         textAlign: TextAlign.center,
                       ),
                     ),
@@ -163,7 +190,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       enabled: widget.state.canSend && !_sending,
                       decoration: InputDecoration(
                         hintText: widget.state.canSend
-                            ? 'Message encrypted room peers'
+                            ? 'Message authenticated room peers'
                             : 'Nearby chat unavailable',
                         border: const OutlineInputBorder(),
                       ),
@@ -227,6 +254,19 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Future<void> _showIdentities() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => TrustedIdentitiesDialog(
+        localIdentity: widget.state.localIdentity,
+        identities: widget.state.trustedIdentities,
+        onVerify: widget.onVerifyIdentity,
+        onAcceptChange: widget.onAcceptIdentityChange,
+        onRejectChange: widget.onRejectIdentityChange,
+      ),
+    );
+  }
+
   Future<void> _showDiagnostics() async {
     await showDialog<void>(
       context: context,
@@ -245,29 +285,30 @@ class _SecurityNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final identityChanges = state.pendingIdentityChanges.length;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      color: Theme.of(context).colorScheme.primaryContainer,
+      color: identityChanges == 0
+          ? Theme.of(context).colorScheme.primaryContainer
+          : Theme.of(context).colorScheme.errorContainer,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: <Widget>[
           Icon(
-            Icons.lock,
+            identityChanges == 0 ? Icons.verified_user : Icons.gpp_maybe,
             size: 16,
-            color: Theme.of(context).colorScheme.onPrimaryContainer,
           ),
           const SizedBox(width: 6),
           Flexible(
             child: Text(
-              '${state.secureRoom.name} · ${state.secureRoom.fingerprint} · End-to-end encrypted',
+              identityChanges == 0
+                  ? '${state.secureRoom.name} · E2EE · Signed device identities'
+                  : '$identityChanges sender identity change${identityChanges == 1 ? '' : 's'} blocked',
               key: const ValueKey<String>('e2ee-room-notice'),
               textAlign: TextAlign.center,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onPrimaryContainer,
-              ),
             ),
           ),
         ],
@@ -373,7 +414,8 @@ class _ConnectionCard extends StatelessWidget {
 
   String _statusTitle(ChatSessionState state) {
     return switch (state.status) {
-      ChatConnectionStatus.initializing => 'Starting encrypted nearby chat',
+      ChatConnectionStatus.initializing =>
+        'Starting authenticated encrypted chat',
       ChatConnectionStatus.permissionDenied => 'Bluetooth permission denied',
       ChatConnectionStatus.localNetworkPermissionDenied =>
         'Nearby permission denied',
@@ -515,6 +557,49 @@ class _PeerVerificationCardState extends State<_PeerVerificationCard> {
   }
 }
 
+class _IdentityChangeCard extends StatelessWidget {
+  const _IdentityChangeCard({
+    required this.identity,
+    required this.additionalChangeCount,
+    required this.onOpen,
+  });
+
+  final TrustedIdentitySummary identity;
+  final int additionalChangeCount;
+  final AsyncAction onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: Card(
+        key: const ValueKey<String>('identity-change-warning'),
+        color: Theme.of(context).colorScheme.errorContainer,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: <Widget>[
+              const Icon(Icons.gpp_maybe),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'A new signing key claimed device ${identity.deviceId}. Its messages are blocked.${additionalChangeCount == 0 ? '' : ' $additionalChangeCount more change${additionalChangeCount == 1 ? '' : 's'} waiting.'}',
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.tonal(
+                key: const ValueKey<String>('review-identity-change-button'),
+                onPressed: onOpen,
+                child: const Text('Review'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _MessageTile extends StatelessWidget {
   const _MessageTile({required this.message, super.key});
 
@@ -523,7 +608,10 @@ class _MessageTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final outgoing = message.direction == ChatMessageDirection.outgoing;
-    final protection = _protectionLabel(message.protectionStatus);
+    final protection = _protectionLabel(
+      message.protectionStatus,
+      message.identityStatus,
+    );
     return Align(
       alignment: outgoing ? Alignment.centerRight : Alignment.centerLeft,
       child: ConstrainedBox(
@@ -581,19 +669,39 @@ class _MessageTile extends StatelessWidget {
     };
   }
 
-  (IconData, String) _protectionLabel(MessageProtectionStatus status) {
-    return switch (status) {
-      MessageProtectionStatus.endToEndEncrypted => (
-          Icons.lock,
-          'end-to-end encrypted',
+  (IconData, String) _protectionLabel(
+    MessageProtectionStatus protection,
+    MessageIdentityStatus identity,
+  ) {
+    if (protection == MessageProtectionStatus.legacyUnencrypted) {
+      return (Icons.warning_amber, 'legacy unencrypted history');
+    }
+    if (protection == MessageProtectionStatus.encryptedLegacyIdentity) {
+      return (Icons.lock_outline, 'encrypted · unsigned legacy sender');
+    }
+    if (protection == MessageProtectionStatus.unableToDecrypt) {
+      return (Icons.lock_reset, 'unable to authenticate');
+    }
+    return switch (identity) {
+      MessageIdentityStatus.local => (
+          Icons.verified_user,
+          'E2EE · signed by this device',
         ),
-      MessageProtectionStatus.legacyUnencrypted => (
-          Icons.warning_amber,
-          'legacy unencrypted history',
+      MessageIdentityStatus.verified => (
+          Icons.verified_user,
+          'E2EE · verified sender identity',
         ),
-      MessageProtectionStatus.unableToDecrypt => (
-          Icons.lock_reset,
-          'unable to authenticate',
+      MessageIdentityStatus.seen => (
+          Icons.person_search,
+          'E2EE · first-seen sender identity',
+        ),
+      MessageIdentityStatus.legacyUnsigned => (
+          Icons.lock_outline,
+          'encrypted · unsigned legacy sender',
+        ),
+      MessageIdentityStatus.unavailable => (
+          Icons.gpp_bad,
+          'identity unavailable',
         ),
     };
   }
