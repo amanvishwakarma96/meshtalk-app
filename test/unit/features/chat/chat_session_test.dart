@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -77,38 +76,42 @@ void main() {
     await radio.close();
   });
 
-  test('persists a signed ciphertext and marks it sent after recovery',
-      () async {
-    await session.initialize();
-    await session.send(' hello mesh ');
+  test(
+    'persists a signed ciphertext and marks it sent after recovery',
+    () async {
+      await session.initialize();
+      await session.send(' hello mesh ');
 
-    expect(session.state.pendingCount, 1);
-    expect(
-      messageStore.messages.single.deliveryStatus,
-      StoredDeliveryStatus.queued,
-    );
-    final queued = messageStore.messages.single.envelope;
-    expect(protector.isSignedProtectedPayload(queued.payload), isTrue);
-    expect(
-      session.state.messages.single.identityStatus,
-      MessageIdentityStatus.local,
-    );
+      expect(session.state.pendingCount, 1);
+      expect(
+        messageStore.messages.single.deliveryStatus,
+        StoredDeliveryStatus.queued,
+      );
+      final queued = messageStore.messages.single.envelope;
+      expect(protector.isSignedProtectedPayload(queued.payload), isTrue);
+      expect(
+        session.state.messages.single.identityStatus,
+        MessageIdentityStatus.local,
+      );
 
-    transport.emitPeers(const <NearbyPeer>[
-      NearbyPeer(id: 'peer-a', displayName: 'Peer A'),
-    ]);
-    await _drainEvents();
+      transport.emitPeers(const <NearbyPeer>[
+        NearbyPeer(id: 'peer-a', displayName: 'Peer A'),
+      ]);
+      await _drainEvents();
 
-    expect(session.state.pendingCount, 0);
-    expect(
-        session.state.messages.single.deliveryStatus, ChatDeliveryStatus.sent);
-    final decrypted = await protector.unprotect(
-      envelope: transport.sentMessages.single,
-      room: secureRoom,
-    );
-    expect(utf8.decode(decrypted.clearText), 'hello mesh');
-    expect(decrypted.senderIdentity?.keyId, localIdentity.keyId);
-  });
+      expect(session.state.pendingCount, 0);
+      expect(
+        session.state.messages.single.deliveryStatus,
+        ChatDeliveryStatus.sent,
+      );
+      final decrypted = await protector.unprotect(
+        envelope: transport.sentMessages.single,
+        room: secureRoom,
+      );
+      expect(utf8.decode(decrypted.clearText), 'hello mesh');
+      expect(decrypted.senderIdentity?.keyId, localIdentity.keyId);
+    },
+  );
 
   test('migrates queued plaintext to signed protocol v2', () async {
     final queuedEnvelope = MessageEnvelope(
@@ -119,12 +122,14 @@ void main() {
       hopLimit: 4,
       payload: Uint8List.fromList(utf8.encode('survive restart')),
     );
-    await messageStore.upsert(StoredChatMessage(
-      envelope: queuedEnvelope,
-      senderLabel: _profile.displayName,
-      direction: StoredMessageDirection.outgoing,
-      deliveryStatus: StoredDeliveryStatus.queued,
-    ));
+    await messageStore.upsert(
+      StoredChatMessage(
+        envelope: queuedEnvelope,
+        senderLabel: _profile.displayName,
+        direction: StoredMessageDirection.outgoing,
+        deliveryStatus: StoredDeliveryStatus.queued,
+      ),
+    );
 
     await session.initialize();
 
@@ -155,37 +160,42 @@ void main() {
     expect(decrypted.senderIdentity?.keyId, localIdentity.keyId);
   });
 
-  test('pins a first-seen signed identity and relays ciphertext once',
-      () async {
-    await session.initialize();
-    transport.emitPeers(const <NearbyPeer>[
-      NearbyPeer(id: 'peer-a', displayName: 'Peer A'),
-    ]);
-    await _drainEvents();
-    final incoming = await _protectedEnvelope(
-      id: '550e8400-e29b-41d4-a716-446655440010',
-      identity: remoteIdentity,
-      text: 'from peer',
-      hopLimit: 2,
-    );
+  test(
+    'pins a first-seen signed identity and relays ciphertext once',
+    () async {
+      await session.initialize();
+      transport.emitPeers(const <NearbyPeer>[
+        NearbyPeer(id: 'peer-a', displayName: 'Peer A'),
+      ]);
+      await _drainEvents();
+      final incoming = await _protectedEnvelope(
+        id: '550e8400-e29b-41d4-a716-446655440010',
+        identity: remoteIdentity,
+        text: 'from peer',
+        hopLimit: 2,
+      );
 
-    transport.emitIncoming(incoming);
-    transport.emitIncoming(incoming);
-    await _drainEvents();
+      transport.emitIncoming(incoming);
+      transport.emitIncoming(incoming);
+      await _drainEvents();
 
-    expect(session.state.messages.single.text, 'from peer');
-    expect(
-      session.state.messages.single.identityStatus,
-      MessageIdentityStatus.seen,
-    );
-    expect(session.state.trustedIdentities.single.keyId, remoteIdentity.keyId);
-    expect(
-      session.state.trustedIdentities.single.trustLevel,
-      IdentityTrustLevel.seen,
-    );
-    expect(messageStore.messages.length, 1);
-    expect(transport.sentMessages.single.hopLimit, 1);
-  });
+      expect(session.state.messages.single.text, 'from peer');
+      expect(
+        session.state.messages.single.identityStatus,
+        MessageIdentityStatus.seen,
+      );
+      expect(
+        session.state.trustedIdentities.single.keyId,
+        remoteIdentity.keyId,
+      );
+      expect(
+        session.state.trustedIdentities.single.trustLevel,
+        IdentityTrustLevel.seen,
+      );
+      expect(messageStore.messages.length, 1);
+      expect(transport.sentMessages.single.hopLimit, 1);
+    },
+  );
 
   test('marks a pinned fingerprint verified for later messages', () async {
     await session.initialize();
@@ -219,90 +229,109 @@ void main() {
     );
   });
 
-  test('blocks a changed identity while still relaying its ciphertext',
-      () async {
-    await session.initialize();
-    transport.emitPeers(const <NearbyPeer>[
-      NearbyPeer(id: 'peer-a', displayName: 'Peer A'),
-    ]);
-    await _drainEvents();
-    transport.emitIncoming(await _protectedEnvelope(
-      id: '550e8400-e29b-41d4-a716-446655440013',
-      identity: remoteIdentity,
-      text: 'original key',
-      hopLimit: 1,
-    ));
-    await _drainEvents();
+  test(
+    'blocks a changed identity while still relaying its ciphertext',
+    () async {
+      await session.initialize();
+      transport.emitPeers(const <NearbyPeer>[
+        NearbyPeer(id: 'peer-a', displayName: 'Peer A'),
+      ]);
+      await _drainEvents();
+      transport.emitIncoming(
+        await _protectedEnvelope(
+          id: '550e8400-e29b-41d4-a716-446655440013',
+          identity: remoteIdentity,
+          text: 'original key',
+          hopLimit: 1,
+        ),
+      );
+      await _drainEvents();
 
-    final changed = await _protectedEnvelope(
-      id: '550e8400-e29b-41d4-a716-446655440014',
-      identity: changedRemoteIdentity,
-      text: 'new key blocked',
-      hopLimit: 2,
-    );
-    transport.emitIncoming(changed);
-    await _drainEvents();
+      final changed = await _protectedEnvelope(
+        id: '550e8400-e29b-41d4-a716-446655440014',
+        identity: changedRemoteIdentity,
+        text: 'new key blocked',
+        hopLimit: 2,
+      );
+      transport.emitIncoming(changed);
+      await _drainEvents();
 
-    expect(session.state.messages.length, 1);
-    expect(session.state.pendingIdentityChanges.length, 1);
-    expect(
-      session.state.pendingIdentityChanges.single.pendingKeyId,
-      changedRemoteIdentity.keyId,
-    );
-    expect(session.state.diagnostics?.lastError, contains('Identity changed'));
-    expect(transport.sentMessages.last.id, changed.id);
-    expect(transport.sentMessages.last.hopLimit, 1);
-  });
+      expect(session.state.messages.length, 1);
+      expect(session.state.pendingIdentityChanges.length, 1);
+      expect(
+        session.state.pendingIdentityChanges.single.pendingKeyId,
+        changedRemoteIdentity.keyId,
+      );
+      expect(
+        session.state.diagnostics?.lastError,
+        contains('Identity changed'),
+      );
+      expect(transport.sentMessages.last.id, changed.id);
+      expect(transport.sentMessages.last.hopLimit, 1);
+    },
+  );
 
-  test('accepting a changed fingerprint releases the blocked message',
-      () async {
-    await session.initialize();
-    transport.emitIncoming(await _protectedEnvelope(
-      id: '550e8400-e29b-41d4-a716-446655440015',
-      identity: remoteIdentity,
-      text: 'old key',
-      hopLimit: 1,
-    ));
-    await _drainEvents();
-    transport.emitIncoming(await _protectedEnvelope(
-      id: '550e8400-e29b-41d4-a716-446655440016',
-      identity: changedRemoteIdentity,
-      text: 'approved new key',
-      hopLimit: 1,
-    ));
-    await _drainEvents();
+  test(
+    'accepting a changed fingerprint releases the blocked message',
+    () async {
+      await session.initialize();
+      transport.emitIncoming(
+        await _protectedEnvelope(
+          id: '550e8400-e29b-41d4-a716-446655440015',
+          identity: remoteIdentity,
+          text: 'old key',
+          hopLimit: 1,
+        ),
+      );
+      await _drainEvents();
+      transport.emitIncoming(
+        await _protectedEnvelope(
+          id: '550e8400-e29b-41d4-a716-446655440016',
+          identity: changedRemoteIdentity,
+          text: 'approved new key',
+          hopLimit: 1,
+        ),
+      );
+      await _drainEvents();
 
-    await session.acceptIdentityChange(
-      session.state.pendingIdentityChanges.single,
-    );
-    await _drainEvents();
+      await session.acceptIdentityChange(
+        session.state.pendingIdentityChanges.single,
+      );
+      await _drainEvents();
 
-    expect(session.state.messages.length, 2);
-    expect(session.state.messages.last.text, 'approved new key');
-    expect(
-        session.state.messages.last.identityStatus, MessageIdentityStatus.seen);
-    expect(session.state.pendingIdentityChanges, isEmpty);
-    expect(
-      session.state.trustedIdentities.single.keyId,
-      changedRemoteIdentity.keyId,
-    );
-  });
+      expect(session.state.messages.length, 2);
+      expect(session.state.messages.last.text, 'approved new key');
+      expect(
+        session.state.messages.last.identityStatus,
+        MessageIdentityStatus.seen,
+      );
+      expect(session.state.pendingIdentityChanges, isEmpty);
+      expect(
+        session.state.trustedIdentities.single.keyId,
+        changedRemoteIdentity.keyId,
+      );
+    },
+  );
 
   test('rejecting a changed fingerprint keeps the old key pinned', () async {
     await session.initialize();
-    transport.emitIncoming(await _protectedEnvelope(
-      id: '550e8400-e29b-41d4-a716-446655440017',
-      identity: remoteIdentity,
-      text: 'old key',
-      hopLimit: 1,
-    ));
+    transport.emitIncoming(
+      await _protectedEnvelope(
+        id: '550e8400-e29b-41d4-a716-446655440017',
+        identity: remoteIdentity,
+        text: 'old key',
+        hopLimit: 1,
+      ),
+    );
     await _drainEvents();
-    transport.emitIncoming(await _protectedEnvelope(
-      id: '550e8400-e29b-41d4-a716-446655440018',
-      identity: changedRemoteIdentity,
-      text: 'rejected key',
-      hopLimit: 1,
-    ));
+    transport.emitIncoming(
+      await _protectedEnvelope(
+        id: '550e8400-e29b-41d4-a716-446655440018',
+        identity: changedRemoteIdentity,
+        text: 'rejected key',
+        hopLimit: 1,
+      ),
+    );
     await _drainEvents();
 
     await session.rejectIdentityChange(
@@ -314,54 +343,60 @@ void main() {
     expect(session.state.trustedIdentities.single.keyId, remoteIdentity.keyId);
   });
 
-  test('drops tampered signed ciphertext and records an identity error',
-      () async {
-    await session.initialize();
-    final incoming = await _protectedEnvelope(
-      id: '550e8400-e29b-41d4-a716-446655440019',
-      identity: remoteIdentity,
-      text: 'do not display',
-      hopLimit: 1,
-    );
-    final changed = Uint8List.fromList(incoming.payload);
-    changed[changed.length - 1] ^= 0x01;
+  test(
+    'drops tampered signed ciphertext and records an identity error',
+    () async {
+      await session.initialize();
+      final incoming = await _protectedEnvelope(
+        id: '550e8400-e29b-41d4-a716-446655440019',
+        identity: remoteIdentity,
+        text: 'do not display',
+        hopLimit: 1,
+      );
+      final changed = Uint8List.fromList(incoming.payload);
+      changed[changed.length - 1] ^= 0x01;
 
-    transport.emitIncoming(incoming.copyWith(payload: changed));
-    await _drainEvents();
+      transport.emitIncoming(incoming.copyWith(payload: changed));
+      await _drainEvents();
 
-    expect(session.state.messages, isEmpty);
-    expect(messageStore.messages, isEmpty);
-    expect(
-        session.state.diagnostics?.lastError, contains('signature is invalid'));
-  });
+      expect(session.state.messages, isEmpty);
+      expect(messageStore.messages, isEmpty);
+      expect(
+        session.state.diagnostics?.lastError,
+        contains('signature is invalid'),
+      );
+    },
+  );
 
-  test('relays signed ciphertext for another room without trusting it',
-      () async {
-    await session.initialize();
-    transport.emitPeers(const <NearbyPeer>[
-      NearbyPeer(id: 'peer-a', displayName: 'Peer A'),
-    ]);
-    await _drainEvents();
-    final otherRoom = await _secureRoom(
-      roomId: 'anotherSecureRoom1234567',
-      keyOffset: 40,
-    );
-    final incoming = await _protectedEnvelope(
-      id: '550e8400-e29b-41d4-a716-446655440020',
-      identity: remoteIdentity,
-      text: 'relay only',
-      hopLimit: 2,
-      room: otherRoom,
-    );
+  test(
+    'relays signed ciphertext for another room without trusting it',
+    () async {
+      await session.initialize();
+      transport.emitPeers(const <NearbyPeer>[
+        NearbyPeer(id: 'peer-a', displayName: 'Peer A'),
+      ]);
+      await _drainEvents();
+      final otherRoom = await _secureRoom(
+        roomId: 'anotherSecureRoom1234567',
+        keyOffset: 40,
+      );
+      final incoming = await _protectedEnvelope(
+        id: '550e8400-e29b-41d4-a716-446655440020',
+        identity: remoteIdentity,
+        text: 'relay only',
+        hopLimit: 2,
+        room: otherRoom,
+      );
 
-    transport.emitIncoming(incoming);
-    await _drainEvents();
+      transport.emitIncoming(incoming);
+      await _drainEvents();
 
-    expect(session.state.messages, isEmpty);
-    expect(session.state.trustedIdentities, isEmpty);
-    expect(transport.sentMessages.single.id, incoming.id);
-    expect(transport.sentMessages.single.hopLimit, 1);
-  });
+      expect(session.state.messages, isEmpty);
+      expect(session.state.trustedIdentities, isEmpty);
+      expect(transport.sentMessages.single.id, incoming.id);
+      expect(transport.sentMessages.single.hopLimit, 1);
+    },
+  );
 
   test('retains permission recovery and Android Nearby fallback', () async {
     radio.currentAvailability = BleRadioAvailability.unauthorized;
@@ -387,32 +422,37 @@ void main() {
     await session.initialize();
 
     expect(session.state.activeTransportKind, TransportKind.localWifi);
-    expect(session.state.statusMessage, contains('Android Nearby Connections'));
-  });
-
-  test('routes matching-code approval and reports identity diagnostics',
-      () async {
-    radio.currentAvailability = BleRadioAvailability.poweredOff;
-    fallbackTransport.forcedAvailability = true;
-    await session.initialize();
-    const request = PeerVerificationRequest(
-      transportId: 'android-nearby',
-      endpointId: 'endpoint-a',
-      peerId: 'peer-a',
-      displayName: 'Peer A',
-      authenticationToken: '4721',
-      isIncomingConnection: true,
+    expect(
+      session.state.statusMessage,
+      contains('Android Nearby Connections'),
     );
-    fallbackTransport.emitVerification(request);
-    await _drainEvents();
-
-    await session.approvePeer(request);
-    await _drainEvents();
-
-    expect(fallbackTransport.approvedEndpointIds, <String>['endpoint-a']);
-    expect(session.state.localIdentity.keyId, localIdentity.keyId);
-    expect(session.state.diagnostics?.activeTransportId, 'android-nearby');
   });
+
+  test(
+    'routes matching-code approval and reports identity diagnostics',
+    () async {
+      radio.currentAvailability = BleRadioAvailability.poweredOff;
+      fallbackTransport.forcedAvailability = true;
+      await session.initialize();
+      const request = PeerVerificationRequest(
+        transportId: 'android-nearby',
+        endpointId: 'endpoint-a',
+        peerId: 'peer-a',
+        displayName: 'Peer A',
+        authenticationToken: '4721',
+        isIncomingConnection: true,
+      );
+      fallbackTransport.emitVerification(request);
+      await _drainEvents();
+
+      await session.approvePeer(request);
+      await _drainEvents();
+
+      expect(fallbackTransport.approvedEndpointIds, <String>['endpoint-a']);
+      expect(session.state.localIdentity.keyId, localIdentity.keyId);
+      expect(session.state.diagnostics?.activeTransportId, 'android-nearby');
+    },
+  );
 }
 
 const LocalProfile _profile = LocalProfile(
