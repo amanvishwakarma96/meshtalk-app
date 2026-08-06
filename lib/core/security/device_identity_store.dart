@@ -110,8 +110,17 @@ class DeviceIdentityStore {
         type: KeyPairType.ed25519,
       );
       final challenge = utf8.encode(_selfCheckMessage);
-      final signature = await _algorithm.sign(challenge, keyPair: keyPair);
-      final valid = await _algorithm.verify(challenge, signature: signature);
+      final generatedSignature = await _algorithm.sign(
+        challenge,
+        keyPair: keyPair,
+      );
+      final valid = await _algorithm.verify(
+        challenge,
+        signature: Signature(
+          generatedSignature.bytes,
+          publicKey: publicKeyData,
+        ),
+      );
       if (!valid) {
         throw const FormatException(
           'Stored signing private key does not match its public key.',
