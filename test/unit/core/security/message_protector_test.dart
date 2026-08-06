@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meshtalk_app/core/ble/message_envelope.dart';
+import 'package:meshtalk_app/core/security/device_identity.dart';
 import 'package:meshtalk_app/core/security/message_protector.dart';
 import 'package:meshtalk_app/core/security/secure_room.dart';
 import 'package:meshtalk_app/core/security/secure_room_code_codec.dart';
@@ -10,15 +12,17 @@ import 'package:meshtalk_app/core/security/secure_room_code_codec.dart';
 void main() {
   late MessageProtector protector;
   late SecureRoom room;
+  late DeviceIdentity identity;
 
   setUp(() async {
     protector = MessageProtector();
     room = await _room(
       keyBytes: List<int>.generate(32, (index) => index),
     );
+    identity = await _identity('device-a');
   });
 
-  test('encrypts and authenticates a message payload', () async {
+  test('encrypts, signs, and authenticates a message payload', () async {
     final envelope = _envelope(room.id);
     final clearText = Uint8List.fromList(utf8.encode('top secret payload'));
 
@@ -26,6 +30,7 @@ void main() {
       envelope: envelope,
       clearText: clearText,
       room: room,
+      identity: identity,
     );
     final unprotected = await protector.unprotect(
       envelope: protected,
@@ -33,6 +38,7 @@ void main() {
     );
 
     expect(protector.isProtectedPayload(protected.payload), isTrue);
+    expect(protector.isSignedProtectedPayload(protected.payload), isTrue);
     expect(protected.payload, isNot(clearText));
     expect(_containsSequence(protected.payload, clearText), isFalse);
     expect(unprotected.clearText, clearText);
@@ -40,13 +46,16 @@ void main() {
       unprotected.status,
       MessageProtectionStatus.endToEndEncrypted,
     );
+    expect(unprotected.senderIdentity?.keyId, identity.keyId);
+    expect(unprotected.senderIdentity?.publicKeyBytes, identity.publicKeyBytes);
   });
 
-  test('rejects immutable metadata tampering', () async {
+  test('rejects sender metadata impersonation', () async {
     final protected = await protector.protect(
       envelope: _envelope(room.id),
       clearText: Uint8List.fromList(utf8.encode('authenticated')),
       room: room,
+      identity: identity,
     );
 
     final tampered = protected.copyWith(senderId: 'attacker-device');
@@ -57,7 +66,7 @@ void main() {
         isA<MessageProtectionException>().having(
           (error) => error.failure,
           'failure',
-          MessageProtectionFailure.authenticationFailed,
+          MessageProtectionFailure.signatureInvalid,
         ),
       ),
     );
@@ -68,6 +77,7 @@ void main() {
       envelope: _envelope(room.id),
       clearText: Uint8List.fromList(utf8.encode('relay-safe')),
       room: room,
+      identity: identity,
     );
 
     final relayed = protected.copyWith(hopLimit: protected.hopLimit - 1);
@@ -84,6 +94,7 @@ void main() {
       envelope: _envelope(room.id),
       clearText: Uint8List.fromList(utf8.encode('wrong room')),
       room: room,
+      identity: identity,
     );
     final wrongRoom = await _room(
       roomId: room.id,
@@ -102,11 +113,12 @@ void main() {
     );
   });
 
-  test('rejects changed ciphertext authentication tag', () async {
+  test('rejects changed ciphertext before decryption', () async {
     final protected = await protector.protect(
       envelope: _envelope(room.id),
       clearText: Uint8List.fromList(utf8.encode('tamper proof')),
       room: room,
+      identity: identity,
     );
     final changed = Uint8List.fromList(protected.payload);
     changed[changed.length - 1] ^= 0x01;
@@ -120,14 +132,79 @@ void main() {
         isA<MessageProtectionException>().having(
           (error) => error.failure,
           'failure',
-          MessageProtectionFailure.authenticationFailed,
+          MessageProtectionFailure.signatureInvalid,
         ),
       ),
     );
   });
 
-  test('allows legacy payloads only for explicit local history reads',
-      () async {
+  test('rejects a changed Ed25519 signature', () async {
+    final protected = await protector.protect(
+      envelope: _envelope(room.id),
+      clearText: Uint8List.fromList(utf8.encode('signed')),
+      room: room,
+      identity: identity,
+    );
+    final changed = Uint8List.fromList(protected.payload);
+    const signatureStart = 4 + 1 + 1 + 8 + 8 + 32 + 24 + 16;
+    changed[signatureStart] ^= 0x01;
+
+    await expectLater(
+      protector.unprotect(
+        envelope: protected.copyWith(payload: changed),
+        room: room,
+      ),
+      throwsA(
+        isA<MessageProtectionException>().having(
+          (error) => error.failure,
+          'failure',
+          MessageProtectionFailure.signatureInvalid,
+        ),
+      ),
+    );
+  });
+
+  test('rejects a public-key fingerprint mismatch', () async {
+    final protected = await protector.protect(
+      envelope: _envelope(room.id),
+      clearText: Uint8List.fromList(utf8.encode('identity-bound')),
+      room: room,
+      identity: identity,
+    );
+    final changed = Uint8List.fromList(protected.payload);
+    const identityKeyIdStart = 4 + 1 + 1 + 8;
+    changed[identityKeyIdStart] ^= 0x01;
+
+    await expectLater(
+      protector.unprotect(
+        envelope: protected.copyWith(payload: changed),
+        room: room,
+      ),
+      throwsA(
+        isA<MessageProtectionException>().having(
+          (error) => error.failure,
+          'failure',
+          MessageProtectionFailure.identityMalformed,
+        ),
+      ),
+    );
+  });
+
+  test('requires the envelope sender to match the signing identity', () async {
+    final otherIdentity = await _identity('device-b');
+
+    await expectLater(
+      protector.protect(
+        envelope: _envelope(room.id),
+        clearText: Uint8List.fromList(utf8.encode('impersonation')),
+        room: room,
+        identity: otherIdentity,
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test('allows plaintext only for explicit local history reads', () async {
     final legacy = _envelope(
       room.id,
       payload: Uint8List.fromList(utf8.encode('old history')),
@@ -154,6 +231,7 @@ void main() {
       unprotected.status,
       MessageProtectionStatus.legacyUnencrypted,
     );
+    expect(unprotected.senderIdentity, isNull);
   });
 }
 
@@ -168,6 +246,18 @@ Future<SecureRoom> _room({
     keyId: await codec.deriveKeyId(keyBytes),
     keyBytes: Uint8List.fromList(keyBytes),
     createdAtUtc: DateTime.utc(2026, 8, 5),
+  );
+}
+
+Future<DeviceIdentity> _identity(String deviceId) async {
+  final extracted = await (await Ed25519().newKeyPair()).extract();
+  final digest = await Sha256().hash(extracted.publicKey.bytes);
+  return DeviceIdentity(
+    deviceId: deviceId,
+    keyId: base64UrlEncode(digest.bytes.take(8).toList()).replaceAll('=', ''),
+    publicKeyBytes: Uint8List.fromList(extracted.publicKey.bytes),
+    privateKeyBytes: Uint8List.fromList(extracted.bytes),
+    createdAtUtc: DateTime.utc(2026, 8, 6),
   );
 }
 
