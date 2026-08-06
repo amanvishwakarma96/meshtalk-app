@@ -13,8 +13,8 @@ void main() {
     );
 
     final first = await firstStore.loadOrCreate('device-a');
-    final second = await DeviceIdentityStore(values: values)
-        .loadOrCreate('device-a');
+    final second =
+        await DeviceIdentityStore(values: values).loadOrCreate('device-a');
 
     expect(second.deviceId, first.deviceId);
     expect(second.keyId, first.keyId);
