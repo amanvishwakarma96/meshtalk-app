@@ -635,8 +635,7 @@ class _MessageTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Wrap(
-                  alignment:
-                      outgoing ? WrapAlignment.end : WrapAlignment.start,
+                  alignment: outgoing ? WrapAlignment.end : WrapAlignment.start,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   spacing: 3,
                   children: <Widget>[
