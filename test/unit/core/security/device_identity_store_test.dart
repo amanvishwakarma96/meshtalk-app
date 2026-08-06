@@ -61,48 +61,52 @@ void main() {
     );
   });
 
-  test('rejects a stored fingerprint that does not match the public key',
-      () async {
-    final values = _MemorySecureValueStore();
-    final store = DeviceIdentityStore(values: values);
-    await store.loadOrCreate('device-a');
-    final state = values.decodeIdentity()..['keyId'] = 'wrongKey90_';
-    await values.writeIdentity(state);
+  test(
+    'rejects a stored fingerprint that does not match the public key',
+    () async {
+      final values = _MemorySecureValueStore();
+      final store = DeviceIdentityStore(values: values);
+      await store.loadOrCreate('device-a');
+      final state = values.decodeIdentity()..['keyId'] = 'wrongKey90_';
+      await values.writeIdentity(state);
 
-    await expectLater(
-      store.loadOrCreate('device-a'),
-      throwsA(
-        isA<StateError>().having(
-          (error) => error.message,
-          'message',
-          contains('fingerprint does not match'),
+      await expectLater(
+        store.loadOrCreate('device-a'),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('fingerprint does not match'),
+          ),
         ),
-      ),
-    );
-  });
+      );
+    },
+  );
 
-  test('rejects a private key that does not match the stored public key',
-      () async {
-    final values = _MemorySecureValueStore();
-    final otherValues = _MemorySecureValueStore();
-    final store = DeviceIdentityStore(values: values);
-    await store.loadOrCreate('device-a');
-    await DeviceIdentityStore(values: otherValues).loadOrCreate('device-b');
-    final state = values.decodeIdentity()
-      ..['privateKey'] = otherValues.decodeIdentity()['privateKey'];
-    await values.writeIdentity(state);
+  test(
+    'rejects a private key that does not match the stored public key',
+    () async {
+      final values = _MemorySecureValueStore();
+      final otherValues = _MemorySecureValueStore();
+      final store = DeviceIdentityStore(values: values);
+      await store.loadOrCreate('device-a');
+      await DeviceIdentityStore(values: otherValues).loadOrCreate('device-b');
+      final state = values.decodeIdentity()
+        ..['privateKey'] = otherValues.decodeIdentity()['privateKey'];
+      await values.writeIdentity(state);
 
-    await expectLater(
-      store.loadOrCreate('device-a'),
-      throwsA(
-        isA<StateError>().having(
-          (error) => error.message,
-          'message',
-          contains('private key does not match'),
+      await expectLater(
+        store.loadOrCreate('device-a'),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('private key does not match'),
+          ),
         ),
-      ),
-    );
-  });
+      );
+    },
+  );
 }
 
 class _MemorySecureValueStore implements SecureValueStore {
