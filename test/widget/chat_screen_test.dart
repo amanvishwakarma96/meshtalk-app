@@ -213,8 +213,10 @@ void main() {
       find.byKey(const ValueKey<String>('identity-change-warning')),
       findsOneWidget,
     );
-    expect(find.textContaining('1 sender identity change blocked'),
-        findsOneWidget);
+    expect(
+      find.textContaining('1 sender identity change blocked'),
+      findsOneWidget,
+    );
     await tester.tap(
       find.byKey(const ValueKey<String>('review-identity-change-button')),
     );
