@@ -124,7 +124,8 @@ class IdentityTrustStore {
         .map((identity) => identity.summary)
         .toList(growable: false)
       ..sort(
-          (left, right) => right.lastSeenAtUtc.compareTo(left.lastSeenAtUtc));
+        (left, right) => right.lastSeenAtUtc.compareTo(left.lastSeenAtUtc),
+      );
     return List<TrustedIdentitySummary>.unmodifiable(values);
   }
 
@@ -206,7 +207,8 @@ class IdentityTrustStore {
           rawIdentities.map(_identityFromJson).toList(growable: false);
       if (identities.length > _maximumIdentities) {
         throw const FormatException(
-            'Identity trust storage exceeds its limit.');
+          'Identity trust storage exceeds its limit.',
+        );
       }
       return _IdentityTrustState(identities);
     } on FormatException catch (error) {
