@@ -17,6 +17,8 @@ class DeviceIdentityStore {
         _nowUtc = nowUtc ?? (() => DateTime.now().toUtc());
 
   static const String _storageKey = 'meshtalk.device-identity.v1';
+  static const String _selfCheckMessage =
+      'meshtalk-device-identity-self-check-v1';
 
   final SecureValueStore _values;
   final Ed25519 _algorithm;
@@ -59,7 +61,10 @@ class DeviceIdentityStore {
     return _base64UrlWithoutPadding(digest.bytes.take(8).toList());
   }
 
-  DeviceIdentity _decode(String encoded, {required String expectedDeviceId}) {
+  Future<DeviceIdentity> _decode(
+    String encoded, {
+    required String expectedDeviceId,
+  }) async {
     try {
       final decoded = jsonDecode(encoded);
       if (decoded is! Map<String, dynamic> || decoded['version'] != 1) {
@@ -82,13 +87,37 @@ class DeviceIdentityStore {
           'Stored signing identity belongs to a different device ID.',
         );
       }
-      return DeviceIdentity(
+      final identity = DeviceIdentity(
         deviceId: deviceId,
         keyId: keyId,
         publicKeyBytes: Uint8List.fromList(_decodeBase64Url(publicKey)),
         privateKeyBytes: Uint8List.fromList(_decodeBase64Url(privateKey)),
         createdAtUtc: DateTime.parse(createdAtUtc).toUtc(),
       );
+      final derivedKeyId = await deriveKeyId(identity.publicKeyBytes);
+      if (derivedKeyId != identity.keyId) {
+        throw const FormatException(
+          'Stored identity fingerprint does not match its public key.',
+        );
+      }
+      final publicKeyData = SimplePublicKey(
+        identity.publicKeyBytes,
+        type: KeyPairType.ed25519,
+      );
+      final keyPair = SimpleKeyPairData(
+        identity.privateKeyBytes,
+        publicKey: publicKeyData,
+        type: KeyPairType.ed25519,
+      );
+      final challenge = utf8.encode(_selfCheckMessage);
+      final signature = await _algorithm.sign(challenge, keyPair: keyPair);
+      final valid = await _algorithm.verify(challenge, signature: signature);
+      if (!valid) {
+        throw const FormatException(
+          'Stored signing private key does not match its public key.',
+        );
+      }
+      return identity;
     } on FormatException catch (error) {
       throw StateError('Device signing identity is corrupt: ${error.message}');
     } on Object catch (error) {
