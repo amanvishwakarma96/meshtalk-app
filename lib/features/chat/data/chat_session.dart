@@ -453,9 +453,10 @@ class ChatSession extends ChangeNotifier {
       return;
     }
 
-    final identityStatus = trust.decision == IdentityTrustDecision.trustedVerified
-        ? MessageIdentityStatus.verified
-        : MessageIdentityStatus.seen;
+    final identityStatus =
+        trust.decision == IdentityTrustDecision.trustedVerified
+            ? MessageIdentityStatus.verified
+            : MessageIdentityStatus.seen;
     final senderSuffix = envelope.senderId.length <= 6
         ? envelope.senderId
         : envelope.senderId.substring(0, 6);
