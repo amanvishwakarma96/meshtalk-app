@@ -9,7 +9,10 @@ import 'package:meshtalk_app/core/profile/local_profile.dart';
 import 'package:meshtalk_app/core/security/device_identity.dart';
 import 'package:meshtalk_app/core/security/identity_trust_store.dart';
 import 'package:meshtalk_app/core/security/message_protector.dart';
+import 'package:meshtalk_app/core/security/room_membership.dart';
+import 'package:meshtalk_app/core/security/room_membership_manager.dart';
 import 'package:meshtalk_app/core/security/secure_room.dart';
+import 'package:meshtalk_app/core/security/secure_room_store.dart';
 import 'package:meshtalk_app/core/storage/message_store.dart';
 import 'package:meshtalk_app/core/storage/stored_chat_message.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
@@ -28,6 +31,8 @@ class ChatSession extends ChangeNotifier {
     required SecureRoom secureRoom,
     required DeviceIdentity deviceIdentity,
     required IdentityTrustStore identityTrustStore,
+    required RoomMembershipManager membershipManager,
+    required SecureRoomStore secureRoomStore,
     required BleMeshRadio radio,
     required ChatTransport bleTransport,
     required TransportManager transportManager,
@@ -39,6 +44,8 @@ class ChatSession extends ChangeNotifier {
   })  : _secureRoom = secureRoom,
         _deviceIdentity = deviceIdentity,
         _identityTrustStore = identityTrustStore,
+        _membershipManager = membershipManager,
+        _secureRoomStore = secureRoomStore,
         _messageProtector = messageProtector ?? MessageProtector(),
         _radio = radio,
         _bleTransport = bleTransport,
@@ -54,10 +61,14 @@ class ChatSession extends ChangeNotifier {
         );
 
   static const String _legacyRoomId = 'nearby';
+  static const int _protectedRoomKeyIdStart = 6;
+  static const int _protectedRoomKeyIdLength = 8;
 
   final SecureRoom _secureRoom;
   final DeviceIdentity _deviceIdentity;
   final IdentityTrustStore _identityTrustStore;
+  final RoomMembershipManager _membershipManager;
+  final SecureRoomStore _secureRoomStore;
   final MessageProtector _messageProtector;
   final BleMeshRadio _radio;
   final ChatTransport _bleTransport;
@@ -92,6 +103,15 @@ class ChatSession extends ChangeNotifier {
       return;
     }
     _initialized = true;
+
+    RoomMembership? localMembership;
+    List<RoomMemberSummary> roomMembers = const <RoomMemberSummary>[];
+    try {
+      localMembership = await _membershipManager.ensureLocalMembership(_secureRoom);
+      roomMembers = await _membershipManager.listCurrentMembers(_secureRoom);
+    } on Object catch (error) {
+      _recordProtectionError(error.toString());
+    }
 
     final trustedIdentities = await _identityTrustStore.list();
     final secureHistory = await _messageStore.loadRoom(_secureRoom.id);
@@ -132,6 +152,9 @@ class ChatSession extends ChangeNotifier {
       _state.copyWith(
         messages: List<ChatTimelineMessage>.unmodifiable(timeline),
         trustedIdentities: trustedIdentities,
+        roomMembers: roomMembers,
+        hasCurrentMembership: localMembership != null,
+        isRoomOwner: localMembership?.role == RoomMemberRole.owner,
         diagnostics: TransportDiagnosticsSnapshot.initial(_radio.availability),
       ),
     );
@@ -261,6 +284,9 @@ class ChatSession extends ChangeNotifier {
     final text = rawText.trim();
     if (text.isEmpty || _closed) {
       return;
+    }
+    if (!_state.hasCurrentMembership) {
+      throw StateError('This device is not authorized for the current room epoch.');
     }
 
     final baseEnvelope = MessageEnvelope(
@@ -422,6 +448,14 @@ class ChatSession extends ChangeNotifier {
       return;
     }
 
+    final receivedKeyId = _protectedRoomKeyId(envelope.payload);
+    if (receivedKeyId == null || receivedKeyId != _secureRoom.keyId) {
+      _recordProtectionError(
+        'Stale or unknown room epoch payload rejected from local delivery.',
+      );
+      return;
+    }
+
     late final UnprotectedMessage unprotected;
     try {
       unprotected = await _messageProtector.unprotect(
@@ -438,6 +472,18 @@ class ChatSession extends ChangeNotifier {
       _recordProtectionError('Signed sender identity is missing.');
       return;
     }
+    final authorized = await _membershipManager.isAuthorizedSender(
+      room: _secureRoom,
+      senderDeviceId: envelope.senderId,
+      signingPublicKeyBytes: senderIdentity.publicKeyBytes,
+    );
+    if (!authorized) {
+      _recordProtectionError(
+        'Sender ${envelope.senderId} is not authorized for room epoch ${_secureRoom.epoch}.',
+      );
+      return;
+    }
+
     final trust = await _identityTrustStore.evaluate(
       senderId: envelope.senderId,
       keyId: senderIdentity.keyId,
@@ -521,12 +567,20 @@ class ChatSession extends ChangeNotifier {
       late final Uint8List clearText;
       if (_messageProtector.isSignedProtectedPayload(envelope.payload)) {
         try {
+          final sourceRoom = await _roomForProtectedEnvelope(envelope);
+          if (sourceRoom == null) {
+            _recordProtectionError(
+              'Queued encrypted message uses a room epoch key that is not available locally.',
+            );
+            continue;
+          }
           final unprotected = await _messageProtector.unprotect(
             envelope: envelope,
-            room: _secureRoom,
+            room: sourceRoom,
           );
           final senderIdentity = unprotected.senderIdentity;
-          if (envelope.senderId == _deviceIdentity.deviceId &&
+          if (sourceRoom.keyId == _secureRoom.keyId &&
+              envelope.senderId == _deviceIdentity.deviceId &&
               senderIdentity?.keyId == _deviceIdentity.keyId) {
             ready.add(stored);
             continue;
@@ -538,9 +592,16 @@ class ChatSession extends ChangeNotifier {
         }
       } else if (_messageProtector.isProtectedPayload(envelope.payload)) {
         try {
+          final sourceRoom = await _roomForProtectedEnvelope(envelope);
+          if (sourceRoom == null) {
+            _recordProtectionError(
+              'Queued legacy encrypted message uses an unavailable room epoch key.',
+            );
+            continue;
+          }
           final unprotected = await _messageProtector.unprotect(
             envelope: envelope,
-            room: _secureRoom,
+            room: sourceRoom,
             allowLegacyIdentity: true,
           );
           clearText = unprotected.clearText;
@@ -580,9 +641,18 @@ class ChatSession extends ChangeNotifier {
     List<TrustedIdentitySummary> trustedIdentities,
   ) async {
     try {
+      final room = _messageProtector.isProtectedPayload(stored.envelope.payload)
+          ? await _roomForProtectedEnvelope(stored.envelope)
+          : _secureRoom;
+      if (room == null) {
+        throw const MessageProtectionException(
+          MessageProtectionFailure.keyMismatch,
+          'Historical room epoch key is not available locally.',
+        );
+      }
       final unprotected = await _messageProtector.unprotect(
         envelope: stored.envelope,
-        room: _secureRoom,
+        room: room,
         allowLegacy: true,
         allowLegacyIdentity: true,
       );
@@ -661,6 +731,30 @@ class ChatSession extends ChangeNotifier {
   Future<void> _refreshTrustedIdentities() async {
     final identities = await _identityTrustStore.list();
     _replaceState(_state.copyWith(trustedIdentities: identities));
+  }
+
+  Future<SecureRoom?> _roomForProtectedEnvelope(MessageEnvelope envelope) async {
+    final keyId = _protectedRoomKeyId(envelope.payload);
+    if (keyId == null) {
+      return null;
+    }
+    if (keyId == _secureRoom.keyId) {
+      return _secureRoom;
+    }
+    return _secureRoomStore.roomForKeyId(envelope.roomId, keyId);
+  }
+
+  String? _protectedRoomKeyId(List<int> payload) {
+    if (!_messageProtector.isProtectedPayload(payload) ||
+        payload.length < _protectedRoomKeyIdStart + _protectedRoomKeyIdLength) {
+      return null;
+    }
+    return base64UrlEncode(
+      payload.sublist(
+        _protectedRoomKeyIdStart,
+        _protectedRoomKeyIdStart + _protectedRoomKeyIdLength,
+      ),
+    ).replaceAll('=', '');
   }
 
   Future<void> _refreshTransport({bool requestAuthorization = false}) async {
