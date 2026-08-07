@@ -2,6 +2,7 @@ import 'package:meshtalk_app/core/profile/local_profile.dart';
 import 'package:meshtalk_app/core/security/device_identity.dart';
 import 'package:meshtalk_app/core/security/identity_trust_store.dart';
 import 'package:meshtalk_app/core/security/message_protector.dart';
+import 'package:meshtalk_app/core/security/room_membership_manager.dart';
 import 'package:meshtalk_app/core/security/secure_room.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
 import 'package:meshtalk_app/core/transport/peer_verification.dart';
@@ -87,6 +88,9 @@ class ChatSessionState {
     this.activeTransportKind,
     this.verificationRequests = const <PeerVerificationRequest>[],
     this.trustedIdentities = const <TrustedIdentitySummary>[],
+    this.roomMembers = const <RoomMemberSummary>[],
+    this.hasCurrentMembership = false,
+    this.isRoomOwner = false,
     this.diagnostics,
   });
 
@@ -118,6 +122,9 @@ class ChatSessionState {
   final TransportKind? activeTransportKind;
   final List<PeerVerificationRequest> verificationRequests;
   final List<TrustedIdentitySummary> trustedIdentities;
+  final List<RoomMemberSummary> roomMembers;
+  final bool hasCurrentMembership;
+  final bool isRoomOwner;
   final TransportDiagnosticsSnapshot? diagnostics;
 
   List<TrustedIdentitySummary> get pendingIdentityChanges => trustedIdentities
@@ -125,8 +132,9 @@ class ChatSessionState {
       .toList(growable: false);
 
   bool get canSend =>
-      status == ChatConnectionStatus.scanning ||
-      status == ChatConnectionStatus.connected;
+      hasCurrentMembership &&
+      (status == ChatConnectionStatus.scanning ||
+          status == ChatConnectionStatus.connected);
 
   bool get canOpenSettings =>
       status == ChatConnectionStatus.permissionDenied ||
@@ -148,6 +156,9 @@ class ChatSessionState {
     TransportKind? activeTransportKind,
     List<PeerVerificationRequest>? verificationRequests,
     List<TrustedIdentitySummary>? trustedIdentities,
+    List<RoomMemberSummary>? roomMembers,
+    bool? hasCurrentMembership,
+    bool? isRoomOwner,
     TransportDiagnosticsSnapshot? diagnostics,
     bool clearActiveTransport = false,
   }) {
@@ -165,6 +176,9 @@ class ChatSessionState {
           : activeTransportKind ?? this.activeTransportKind,
       verificationRequests: verificationRequests ?? this.verificationRequests,
       trustedIdentities: trustedIdentities ?? this.trustedIdentities,
+      roomMembers: roomMembers ?? this.roomMembers,
+      hasCurrentMembership: hasCurrentMembership ?? this.hasCurrentMembership,
+      isRoomOwner: isRoomOwner ?? this.isRoomOwner,
       diagnostics: diagnostics ?? this.diagnostics,
     );
   }

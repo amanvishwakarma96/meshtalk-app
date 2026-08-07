@@ -32,9 +32,22 @@ class RoomMembership {
     required this.issuedByDeviceId,
     required Uint8List issuerPublicKeyBytes,
     required Uint8List signatureBytes,
+    this.version = 1,
+    this.memberAgreementKeyId,
+    Uint8List? memberAgreementPublicKeyBytes,
   })  : memberPublicKeyBytes = Uint8List.fromList(memberPublicKeyBytes),
+        memberAgreementPublicKeyBytes = memberAgreementPublicKeyBytes == null
+            ? null
+            : Uint8List.fromList(memberAgreementPublicKeyBytes),
         issuerPublicKeyBytes = Uint8List.fromList(issuerPublicKeyBytes),
         signatureBytes = Uint8List.fromList(signatureBytes) {
+    if (version != 1 && version != 2) {
+      throw ArgumentError.value(
+        version,
+        'version',
+        'Unsupported membership version.',
+      );
+    }
     if (!RegExp(r'^[A-Za-z0-9_-]{16,64}$').hasMatch(roomId)) {
       throw ArgumentError.value(roomId, 'roomId', 'Invalid room ID.');
     }
@@ -48,31 +61,60 @@ class RoomMembership {
         this.issuerPublicKeyBytes.length != 32) {
       throw ArgumentError('Room membership keys must be Ed25519 public keys.');
     }
+    if (version == 2) {
+      if (memberAgreementKeyId == null ||
+          !RegExp(r'^[A-Za-z0-9_-]{8,24}$').hasMatch(memberAgreementKeyId!)) {
+        throw ArgumentError(
+          'Version 2 membership needs a valid agreement key ID.',
+        );
+      }
+      if (this.memberAgreementPublicKeyBytes?.length != 32) {
+        throw ArgumentError(
+          'Version 2 membership needs a 32-byte X25519 public key.',
+        );
+      }
+    } else if (memberAgreementKeyId != null ||
+        this.memberAgreementPublicKeyBytes != null) {
+      throw ArgumentError(
+        'Version 1 membership cannot contain agreement keys.',
+      );
+    }
     if (this.signatureBytes.length != 64) {
       throw ArgumentError('Room membership signature must contain 64 bytes.');
     }
   }
 
+  final int version;
   final String roomId;
   final int epoch;
   final String memberDeviceId;
   final Uint8List memberPublicKeyBytes;
+  final String? memberAgreementKeyId;
+  final Uint8List? memberAgreementPublicKeyBytes;
   final RoomMemberRole role;
   final DateTime issuedAtUtc;
   final String issuedByDeviceId;
   final Uint8List issuerPublicKeyBytes;
   final Uint8List signatureBytes;
 
+  bool get supportsEpochKeyUpdates =>
+      version >= 2 && memberAgreementPublicKeyBytes != null;
+
   Map<String, Object> get signedFields => <String, Object>{
         'epoch': epoch,
         'issuedAtUtc': issuedAtUtc.toUtc().toIso8601String(),
         'issuedByDeviceId': issuedByDeviceId,
         'issuerPublicKey': base64UrlEncode(issuerPublicKeyBytes),
+        if (memberAgreementKeyId != null)
+          'memberAgreementKeyId': memberAgreementKeyId!,
+        if (memberAgreementPublicKeyBytes != null)
+          'memberAgreementPublicKey':
+              base64UrlEncode(memberAgreementPublicKeyBytes!),
         'memberDeviceId': memberDeviceId,
         'memberPublicKey': base64UrlEncode(memberPublicKeyBytes),
         'role': role.value,
         'roomId': roomId,
-        'version': 1,
+        'version': version,
       };
 
   Map<String, Object> toJson() => <String, Object>{
@@ -82,10 +124,14 @@ class RoomMembership {
 }
 
 class RoomMembershipCodec {
-  RoomMembershipCodec({Ed25519? algorithm})
-      : _algorithm = algorithm ?? Ed25519();
+  RoomMembershipCodec({
+    Ed25519? algorithm,
+    HashAlgorithm? hashAlgorithm,
+  })  : _algorithm = algorithm ?? Ed25519(),
+        _hashAlgorithm = hashAlgorithm ?? Sha256();
 
   final Ed25519 _algorithm;
+  final HashAlgorithm _hashAlgorithm;
 
   Future<RoomMembership> issue({
     required String roomId,
@@ -95,17 +141,26 @@ class RoomMembershipCodec {
     required RoomMemberRole role,
     required DateTime issuedAtUtc,
     required DeviceIdentity issuer,
+    List<int>? memberAgreementPublicKeyBytes,
   }) async {
+    final version = memberAgreementPublicKeyBytes == null ? 1 : 2;
+    final agreementKeyId = memberAgreementPublicKeyBytes == null
+        ? null
+        : await _deriveKeyId(memberAgreementPublicKeyBytes);
     final unsignedFields = <String, Object>{
       'epoch': epoch,
       'issuedAtUtc': issuedAtUtc.toUtc().toIso8601String(),
       'issuedByDeviceId': issuer.deviceId,
       'issuerPublicKey': base64UrlEncode(issuer.publicKeyBytes),
+      if (agreementKeyId != null) 'memberAgreementKeyId': agreementKeyId,
+      if (memberAgreementPublicKeyBytes != null)
+        'memberAgreementPublicKey':
+            base64UrlEncode(memberAgreementPublicKeyBytes),
       'memberDeviceId': memberDeviceId,
       'memberPublicKey': base64UrlEncode(memberPublicKeyBytes),
       'role': role.value,
       'roomId': roomId,
-      'version': 1,
+      'version': version,
     };
     final issuerPublicKey = SimplePublicKey(
       issuer.publicKeyBytes,
@@ -121,10 +176,15 @@ class RoomMembershipCodec {
       keyPair: issuerKeyPair,
     );
     return RoomMembership(
+      version: version,
       roomId: roomId,
       epoch: epoch,
       memberDeviceId: memberDeviceId,
       memberPublicKeyBytes: Uint8List.fromList(memberPublicKeyBytes),
+      memberAgreementKeyId: agreementKeyId,
+      memberAgreementPublicKeyBytes: memberAgreementPublicKeyBytes == null
+          ? null
+          : Uint8List.fromList(memberAgreementPublicKeyBytes),
       role: role,
       issuedAtUtc: issuedAtUtc.toUtc(),
       issuedByDeviceId: issuer.deviceId,
@@ -149,16 +209,29 @@ class RoomMembershipCodec {
   RoomMembership decode(String encoded) {
     try {
       final raw = jsonDecode(encoded);
-      if (raw is! Map<String, dynamic> || raw['version'] != 1) {
+      if (raw is! Map<String, dynamic>) {
+        throw const FormatException('Room membership must be an object.');
+      }
+      final version = raw['version'];
+      if (version != 1 && version != 2) {
         throw const FormatException('Unsupported room membership version.');
       }
+      final agreementKeyId = raw['memberAgreementKeyId'];
+      final agreementPublicKey = raw['memberAgreementPublicKey'];
       return RoomMembership(
+        version: version as int,
         roomId: raw['roomId'] as String,
         epoch: raw['epoch'] as int,
         memberDeviceId: raw['memberDeviceId'] as String,
         memberPublicKeyBytes: Uint8List.fromList(
           base64Url.decode(raw['memberPublicKey'] as String),
         ),
+        memberAgreementKeyId: agreementKeyId as String?,
+        memberAgreementPublicKeyBytes: agreementPublicKey == null
+            ? null
+            : Uint8List.fromList(
+                base64Url.decode(agreementPublicKey as String),
+              ),
         role: RoomMemberRole.parse(raw['role'] as String),
         issuedAtUtc: DateTime.parse(raw['issuedAtUtc'] as String).toUtc(),
         issuedByDeviceId: raw['issuedByDeviceId'] as String,
@@ -175,6 +248,18 @@ class RoomMembershipCodec {
   }
 
   String encode(RoomMembership membership) => jsonEncode(membership.toJson());
+
+  Future<String> _deriveKeyId(List<int> publicKeyBytes) async {
+    if (publicKeyBytes.length != 32) {
+      throw ArgumentError.value(
+        publicKeyBytes.length,
+        'memberAgreementPublicKeyBytes',
+        'X25519 public keys must contain exactly 32 bytes.',
+      );
+    }
+    final digest = await _hashAlgorithm.hash(publicKeyBytes);
+    return base64UrlEncode(digest.bytes.take(8).toList()).replaceAll('=', '');
+  }
 
   Uint8List _canonicalBytes(Map<String, Object> fields) {
     final keys = fields.keys.toList(growable: false)..sort();
