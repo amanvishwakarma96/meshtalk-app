@@ -5,11 +5,13 @@ import 'package:meshtalk_app/core/security/room_membership.dart';
 
 class RoomMembershipInvite {
   const RoomMembershipInvite({
-    required this.membership,
+    required this.ownerMembership,
+    required this.memberMembership,
     required this.keyPackage,
   });
 
-  final RoomMembership membership;
+  final RoomMembership ownerMembership;
+  final RoomMembership memberMembership;
   final RoomEpochKeyPackage keyPackage;
 }
 
@@ -30,7 +32,8 @@ class RoomMembershipInviteCodec {
       utf8.encode(
         jsonEncode(<String, Object>{
           'version': 1,
-          'membership': invite.membership.toJson(),
+          'ownerMembership': invite.ownerMembership.toJson(),
+          'memberMembership': invite.memberMembership.toJson(),
           'keyPackage': invite.keyPackage.toJson(),
         }),
       ),
@@ -52,14 +55,17 @@ class RoomMembershipInviteCodec {
       if (raw is! Map<String, dynamic> || raw['version'] != 1) {
         throw const FormatException('Unsupported membership invite version.');
       }
-      final membershipRaw = raw['membership'];
+      final ownerRaw = raw['ownerMembership'];
+      final memberRaw = raw['memberMembership'];
       final keyPackageRaw = raw['keyPackage'];
-      if (membershipRaw is! Map<String, dynamic> ||
+      if (ownerRaw is! Map<String, dynamic> ||
+          memberRaw is! Map<String, dynamic> ||
           keyPackageRaw is! Map<String, dynamic>) {
         throw const FormatException('Membership invite is malformed.');
       }
       final invite = RoomMembershipInvite(
-        membership: _membershipCodec.decode(jsonEncode(membershipRaw)),
+        ownerMembership: _membershipCodec.decode(jsonEncode(ownerRaw)),
+        memberMembership: _membershipCodec.decode(jsonEncode(memberRaw)),
         keyPackage: _keyPackageCodec.decode(
           'MTK1.${base64UrlEncode(utf8.encode(jsonEncode(keyPackageRaw))).replaceAll('=', '')}',
         ),
@@ -77,26 +83,41 @@ class RoomMembershipInviteCodec {
     } on Object {
       return false;
     }
-    if (!await _membershipCodec.verify(invite.membership) ||
+    if (!await _membershipCodec.verify(invite.ownerMembership) ||
+        !await _membershipCodec.verify(invite.memberMembership) ||
         !await _keyPackageCodec.verify(invite.keyPackage)) {
       return false;
     }
     return _constantTimeEquals(
-      invite.membership.issuerPublicKeyBytes,
-      invite.keyPackage.issuerPublicKeyBytes,
-    );
+          invite.ownerMembership.memberPublicKeyBytes,
+          invite.ownerMembership.issuerPublicKeyBytes,
+        ) &&
+        _constantTimeEquals(
+          invite.ownerMembership.issuerPublicKeyBytes,
+          invite.memberMembership.issuerPublicKeyBytes,
+        ) &&
+        _constantTimeEquals(
+          invite.ownerMembership.issuerPublicKeyBytes,
+          invite.keyPackage.issuerPublicKeyBytes,
+        );
   }
 
   void _validateConsistency(RoomMembershipInvite invite) {
-    final membership = invite.membership;
+    final owner = invite.ownerMembership;
+    final member = invite.memberMembership;
     final package = invite.keyPackage;
-    if (membership.roomId != package.roomId ||
-        membership.epoch != package.epoch ||
-        membership.memberDeviceId != package.memberDeviceId ||
-        membership.memberAgreementKeyId != package.memberAgreementKeyId ||
-        membership.issuedByDeviceId != package.issuedByDeviceId) {
+    if (owner.role != RoomMemberRole.owner ||
+        owner.memberDeviceId != owner.issuedByDeviceId ||
+        owner.roomId != member.roomId ||
+        owner.roomId != package.roomId ||
+        owner.epoch != member.epoch ||
+        owner.epoch != package.epoch ||
+        member.memberDeviceId != package.memberDeviceId ||
+        member.memberAgreementKeyId != package.memberAgreementKeyId ||
+        member.issuedByDeviceId != owner.memberDeviceId ||
+        package.issuedByDeviceId != owner.memberDeviceId) {
       throw const FormatException(
-        'Membership certificate and room key package do not match.',
+        'Membership invite does not contain one consistent owner-authorized epoch.',
       );
     }
   }
