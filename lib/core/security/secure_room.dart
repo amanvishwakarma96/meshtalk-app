@@ -36,8 +36,10 @@ class SecureRoom {
     required Uint8List keyBytes,
     required this.createdAtUtc,
     this.epoch = 1,
+    DateTime? keyActivatedAtUtc,
     List<SecureRoomEpochKey> historicalKeys = const <SecureRoomEpochKey>[],
   })  : keyBytes = Uint8List.fromList(keyBytes),
+        keyActivatedAtUtc = (keyActivatedAtUtc ?? createdAtUtc).toUtc(),
         historicalKeys = List<SecureRoomEpochKey>.unmodifiable(historicalKeys) {
     if (!RegExp(r'^[A-Za-z0-9_-]{16,64}$').hasMatch(id)) {
       throw ArgumentError.value(id, 'id', 'Invalid secure room identifier.');
@@ -83,13 +85,14 @@ class SecureRoom {
   final String keyId;
   final Uint8List keyBytes;
   final DateTime createdAtUtc;
+  final DateTime keyActivatedAtUtc;
   final List<SecureRoomEpochKey> historicalKeys;
 
   SecureRoomEpochKey get currentKey => SecureRoomEpochKey(
         epoch: epoch,
         keyId: keyId,
         keyBytes: keyBytes,
-        activatedAtUtc: createdAtUtc,
+        activatedAtUtc: keyActivatedAtUtc,
       );
 
   List<SecureRoomEpochKey> get keyRing => List<SecureRoomEpochKey>.unmodifiable(
@@ -124,6 +127,7 @@ class SecureRoom {
       keyId: key.keyId,
       keyBytes: key.keyBytes,
       createdAtUtc: createdAtUtc,
+      keyActivatedAtUtc: key.activatedAtUtc,
     );
   }
 
@@ -142,12 +146,7 @@ class SecureRoom {
     }
     final history = <SecureRoomEpochKey>[
       ...historicalKeys,
-      SecureRoomEpochKey(
-        epoch: epoch,
-        keyId: keyId,
-        keyBytes: keyBytes,
-        activatedAtUtc: activatedAtUtc,
-      ),
+      currentKey,
     ];
     final retained = history.length <= maximumHistoricalKeys
         ? history
@@ -159,6 +158,7 @@ class SecureRoom {
       keyId: newKeyId,
       keyBytes: newKeyBytes,
       createdAtUtc: createdAtUtc,
+      keyActivatedAtUtc: activatedAtUtc,
       historicalKeys: retained,
     );
   }
