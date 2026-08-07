@@ -5,11 +5,15 @@ import 'package:meshtalk_app/core/ble/ble_mesh_radio.dart';
 import 'package:meshtalk_app/core/ble/bluetooth_low_energy_mesh_radio.dart';
 import 'package:meshtalk_app/core/profile/local_profile.dart';
 import 'package:meshtalk_app/core/profile/profile_store.dart';
+import 'package:meshtalk_app/core/security/device_agreement_identity.dart';
+import 'package:meshtalk_app/core/security/device_agreement_identity_store.dart';
 import 'package:meshtalk_app/core/security/device_identity.dart';
 import 'package:meshtalk_app/core/security/device_identity_store.dart';
 import 'package:meshtalk_app/core/security/flutter_secure_value_store.dart';
 import 'package:meshtalk_app/core/security/identity_trust_store.dart';
 import 'package:meshtalk_app/core/security/message_protector.dart';
+import 'package:meshtalk_app/core/security/room_membership_manager.dart';
+import 'package:meshtalk_app/core/security/room_membership_store.dart';
 import 'package:meshtalk_app/core/security/secure_room.dart';
 import 'package:meshtalk_app/core/security/secure_room_store.dart';
 import 'package:meshtalk_app/core/storage/message_store.dart';
@@ -57,6 +61,38 @@ final localDeviceIdentityProvider = FutureProvider<DeviceIdentity>((ref) async {
   return ref.watch(deviceIdentityStoreProvider).loadOrCreate(profile.deviceId);
 });
 
+final deviceAgreementIdentityStoreProvider =
+    Provider<DeviceAgreementIdentityStore>((ref) {
+  return DeviceAgreementIdentityStore(
+    values: ref.watch(secureValueStoreProvider),
+  );
+});
+
+final localDeviceAgreementIdentityProvider =
+    FutureProvider<DeviceAgreementIdentity>((ref) async {
+  final profile = await ref.watch(localProfileProvider.future);
+  return ref
+      .watch(deviceAgreementIdentityStoreProvider)
+      .loadOrCreate(profile.deviceId);
+});
+
+final roomMembershipStoreProvider = Provider<RoomMembershipStore>((ref) {
+  return RoomMembershipStore(values: ref.watch(secureValueStoreProvider));
+});
+
+final roomMembershipManagerProvider =
+    FutureProvider<RoomMembershipManager>((ref) async {
+  final signingIdentity = await ref.watch(localDeviceIdentityProvider.future);
+  final agreementIdentity =
+      await ref.watch(localDeviceAgreementIdentityProvider.future);
+  return RoomMembershipManager(
+    roomStore: ref.watch(secureRoomStoreProvider),
+    membershipStore: ref.watch(roomMembershipStoreProvider),
+    signingIdentity: signingIdentity,
+    agreementIdentity: agreementIdentity,
+  );
+});
+
 final identityTrustStoreProvider = Provider<IdentityTrustStore>((ref) {
   return IdentityTrustStore(values: ref.watch(secureValueStoreProvider));
 });
@@ -95,6 +131,8 @@ final chatSessionProvider = FutureProvider<ChatSession>((ref) async {
   final profile = await ref.watch(localProfileProvider.future);
   final secureRoom = await ref.watch(activeSecureRoomProvider.future);
   final deviceIdentity = await ref.watch(localDeviceIdentityProvider.future);
+  final membershipManager =
+      await ref.watch(roomMembershipManagerProvider.future);
   final radio = ref.watch(bleRadioFactoryProvider)(profile);
   final bleTransport = BleTransport(radio: radio);
   final nearbyGateway = ref.watch(nearbyConnectionsGatewayProvider);
@@ -123,6 +161,8 @@ final chatSessionProvider = FutureProvider<ChatSession>((ref) async {
     secureRoom: secureRoom,
     deviceIdentity: deviceIdentity,
     identityTrustStore: ref.watch(identityTrustStoreProvider),
+    membershipManager: membershipManager,
+    secureRoomStore: ref.watch(secureRoomStoreProvider),
     messageProtector: ref.watch(messageProtectorProvider),
     radio: radio,
     bleTransport: bleTransport,
