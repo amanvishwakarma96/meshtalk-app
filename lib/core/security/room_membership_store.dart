@@ -155,7 +155,8 @@ class RoomMembershipStore {
         }
         final membership = _codec.decode(jsonEncode(entry));
         if (!await _codec.verify(membership)) {
-          throw const FormatException('Stored membership signature is invalid.');
+          throw const FormatException(
+              'Stored membership signature is invalid.');
         }
         memberships.add(membership);
       }
