@@ -6,9 +6,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:meshtalk_app/core/ble/ble_mesh_radio.dart';
 import 'package:meshtalk_app/core/ble/message_envelope.dart';
 import 'package:meshtalk_app/core/profile/local_profile.dart';
+import 'package:meshtalk_app/core/security/device_agreement_identity.dart';
 import 'package:meshtalk_app/core/security/device_identity.dart';
 import 'package:meshtalk_app/core/security/identity_trust_store.dart';
 import 'package:meshtalk_app/core/security/message_protector.dart';
+import 'package:meshtalk_app/core/security/room_membership.dart';
+import 'package:meshtalk_app/core/security/room_membership_manager.dart';
+import 'package:meshtalk_app/core/security/room_membership_store.dart';
 import 'package:meshtalk_app/core/security/secure_room.dart';
 import 'package:meshtalk_app/core/security/secure_room_code_codec.dart';
 import 'package:meshtalk_app/core/security/secure_room_store.dart';
@@ -28,10 +32,15 @@ void main() {
   late FakeVerifiableChatTransport fallbackTransport;
   late FakeMessageStore messageStore;
   late SecureRoom secureRoom;
+  late SecureRoomStore secureRoomStore;
+  late RoomMembershipStore membershipStore;
+  late RoomMembershipManager membershipManager;
   late MessageProtector protector;
   late DeviceIdentity localIdentity;
   late DeviceIdentity remoteIdentity;
   late DeviceIdentity changedRemoteIdentity;
+  late DeviceAgreementIdentity localAgreementIdentity;
+  late DeviceAgreementIdentity remoteAgreementIdentity;
   late IdentityTrustStore trustStore;
   late ChatSession session;
   var settingsOpened = false;
@@ -52,7 +61,34 @@ void main() {
     localIdentity = await _identity(_profile.deviceId);
     remoteIdentity = await _identity('remote-device');
     changedRemoteIdentity = await _identity('remote-device');
-    trustStore = IdentityTrustStore(values: _MemorySecureValueStore());
+    localAgreementIdentity = await _agreementIdentity(_profile.deviceId);
+    remoteAgreementIdentity = await _agreementIdentity('remote-device');
+    final secureValues = _MemorySecureValueStore();
+    secureRoomStore = SecureRoomStore(values: secureValues);
+    await secureRoomStore.installEpochKey(
+      roomId: secureRoom.id,
+      roomName: secureRoom.name,
+      epoch: secureRoom.epoch,
+      keyId: secureRoom.keyId,
+      keyBytes: secureRoom.keyBytes,
+      activatedAtUtc: secureRoom.keyActivatedAtUtc,
+    );
+    membershipStore = RoomMembershipStore(values: secureValues);
+    membershipManager = RoomMembershipManager(
+      roomStore: secureRoomStore,
+      membershipStore: membershipStore,
+      signingIdentity: localIdentity,
+      agreementIdentity: localAgreementIdentity,
+    );
+    await membershipManager.ensureLocalMembership(secureRoom);
+    await _authorizeMember(
+      store: membershipStore,
+      room: secureRoom,
+      issuer: localIdentity,
+      member: remoteIdentity,
+      agreementIdentity: remoteAgreementIdentity,
+    );
+    trustStore = IdentityTrustStore(values: secureValues);
     settingsOpened = false;
     session = _session(
       radio: radio,
@@ -60,6 +96,8 @@ void main() {
       fallback: fallbackTransport,
       store: messageStore,
       room: secureRoom,
+      roomStore: secureRoomStore,
+      membershipManager: membershipManager,
       protector: protector,
       localIdentity: localIdentity,
       trustStore: trustStore,
@@ -230,7 +268,7 @@ void main() {
   });
 
   test(
-    'blocks a changed identity while still relaying its ciphertext',
+    'blocks an owner-authorized changed identity until trust is updated',
     () async {
       await session.initialize();
       transport.emitPeers(const <NearbyPeer>[
@@ -246,6 +284,13 @@ void main() {
         ),
       );
       await _drainEvents();
+      await _authorizeMember(
+        store: membershipStore,
+        room: secureRoom,
+        issuer: localIdentity,
+        member: changedRemoteIdentity,
+        agreementIdentity: remoteAgreementIdentity,
+      );
 
       final changed = await _protectedEnvelope(
         id: '550e8400-e29b-41d4-a716-446655440014',
@@ -272,7 +317,7 @@ void main() {
   );
 
   test(
-    'accepting a changed fingerprint releases the blocked message',
+    'accepting an owner-authorized changed fingerprint releases the message',
     () async {
       await session.initialize();
       transport.emitIncoming(
@@ -284,6 +329,13 @@ void main() {
         ),
       );
       await _drainEvents();
+      await _authorizeMember(
+        store: membershipStore,
+        room: secureRoom,
+        issuer: localIdentity,
+        member: changedRemoteIdentity,
+        agreementIdentity: remoteAgreementIdentity,
+      );
       transport.emitIncoming(
         await _protectedEnvelope(
           id: '550e8400-e29b-41d4-a716-446655440016',
@@ -313,35 +365,45 @@ void main() {
     },
   );
 
-  test('rejecting a changed fingerprint keeps the old key pinned', () async {
-    await session.initialize();
-    transport.emitIncoming(
-      await _protectedEnvelope(
-        id: '550e8400-e29b-41d4-a716-446655440017',
-        identity: remoteIdentity,
-        text: 'old key',
-        hopLimit: 1,
-      ),
-    );
-    await _drainEvents();
-    transport.emitIncoming(
-      await _protectedEnvelope(
-        id: '550e8400-e29b-41d4-a716-446655440018',
-        identity: changedRemoteIdentity,
-        text: 'rejected key',
-        hopLimit: 1,
-      ),
-    );
-    await _drainEvents();
+  test(
+    'rejecting an owner-authorized changed fingerprint keeps old trust',
+    () async {
+      await session.initialize();
+      transport.emitIncoming(
+        await _protectedEnvelope(
+          id: '550e8400-e29b-41d4-a716-446655440017',
+          identity: remoteIdentity,
+          text: 'old key',
+          hopLimit: 1,
+        ),
+      );
+      await _drainEvents();
+      await _authorizeMember(
+        store: membershipStore,
+        room: secureRoom,
+        issuer: localIdentity,
+        member: changedRemoteIdentity,
+        agreementIdentity: remoteAgreementIdentity,
+      );
+      transport.emitIncoming(
+        await _protectedEnvelope(
+          id: '550e8400-e29b-41d4-a716-446655440018',
+          identity: changedRemoteIdentity,
+          text: 'rejected key',
+          hopLimit: 1,
+        ),
+      );
+      await _drainEvents();
 
-    await session.rejectIdentityChange(
-      session.state.pendingIdentityChanges.single,
-    );
+      await session.rejectIdentityChange(
+        session.state.pendingIdentityChanges.single,
+      );
 
-    expect(session.state.messages.length, 1);
-    expect(session.state.pendingIdentityChanges, isEmpty);
-    expect(session.state.trustedIdentities.single.keyId, remoteIdentity.keyId);
-  });
+      expect(session.state.messages.length, 1);
+      expect(session.state.pendingIdentityChanges, isEmpty);
+      expect(session.state.trustedIdentities.single.keyId, remoteIdentity.keyId);
+    },
+  );
 
   test(
     'drops tampered signed ciphertext and records an identity error',
@@ -414,6 +476,8 @@ void main() {
       fallback: fallbackTransport,
       store: messageStore,
       room: secureRoom,
+      roomStore: secureRoomStore,
+      membershipManager: membershipManager,
       protector: protector,
       localIdentity: localIdentity,
       trustStore: trustStore,
@@ -451,6 +515,9 @@ void main() {
       expect(fallbackTransport.approvedEndpointIds, <String>['endpoint-a']);
       expect(session.state.localIdentity.keyId, localIdentity.keyId);
       expect(session.state.diagnostics?.activeTransportId, 'android-nearby');
+      expect(session.state.hasCurrentMembership, isTrue);
+      expect(session.state.isRoomOwner, isTrue);
+      expect(session.state.roomMembers.length, 2);
     },
   );
 }
@@ -466,6 +533,8 @@ ChatSession _session({
   required FakeChatTransport fallback,
   required FakeMessageStore store,
   required SecureRoom room,
+  required SecureRoomStore roomStore,
+  required RoomMembershipManager membershipManager,
   required MessageProtector protector,
   required DeviceIdentity localIdentity,
   required IdentityTrustStore trustStore,
@@ -476,6 +545,8 @@ ChatSession _session({
     secureRoom: room,
     deviceIdentity: localIdentity,
     identityTrustStore: trustStore,
+    membershipManager: membershipManager,
+    secureRoomStore: roomStore,
     messageProtector: protector,
     radio: radio,
     bleTransport: transport,
@@ -514,6 +585,38 @@ Future<DeviceIdentity> _identity(String deviceId) async {
     privateKeyBytes: Uint8List.fromList(extracted.bytes),
     createdAtUtc: DateTime.utc(2026, 8, 6),
   );
+}
+
+Future<DeviceAgreementIdentity> _agreementIdentity(String deviceId) async {
+  final extracted = await (await X25519().newKeyPair()).extract();
+  final digest = await Sha256().hash(extracted.publicKey.bytes);
+  return DeviceAgreementIdentity(
+    deviceId: deviceId,
+    keyId: base64UrlEncode(digest.bytes.take(8).toList()).replaceAll('=', ''),
+    publicKeyBytes: Uint8List.fromList(extracted.publicKey.bytes),
+    privateKeyBytes: Uint8List.fromList(extracted.bytes),
+    createdAtUtc: DateTime.utc(2026, 8, 6),
+  );
+}
+
+Future<void> _authorizeMember({
+  required RoomMembershipStore store,
+  required SecureRoom room,
+  required DeviceIdentity issuer,
+  required DeviceIdentity member,
+  required DeviceAgreementIdentity agreementIdentity,
+}) async {
+  final membership = await RoomMembershipCodec().issue(
+    roomId: room.id,
+    epoch: room.epoch,
+    memberDeviceId: member.deviceId,
+    memberPublicKeyBytes: member.publicKeyBytes,
+    memberAgreementPublicKeyBytes: agreementIdentity.publicKeyBytes,
+    role: RoomMemberRole.member,
+    issuedAtUtc: DateTime.utc(2026, 8, 6, 12),
+    issuer: issuer,
+  );
+  await store.upsert(membership);
 }
 
 Future<MessageEnvelope> _protectedEnvelope({
