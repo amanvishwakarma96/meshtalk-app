@@ -223,7 +223,8 @@ class RoomMembershipManager {
     final invite = _inviteCodec.decode(inviteCode);
     if (!await _inviteCodec.verify(invite)) {
       throw const FormatException(
-          'Membership invite signature chain is invalid.');
+        'Membership invite signature chain is invalid.',
+      );
     }
     final membership = invite.memberMembership;
     if (membership.memberDeviceId != localDeviceId ||
@@ -237,7 +238,8 @@ class RoomMembershipManager {
           _agreementIdentity.publicKeyBytes,
         )) {
       throw const FormatException(
-          'Membership invite belongs to another device.');
+        'Membership invite belongs to another device.',
+      );
     }
 
     final keyBytes = await _keyPackageCodec.open(
@@ -363,7 +365,8 @@ class RoomMembershipManager {
           _agreementIdentity.publicKeyBytes,
         )) {
       throw StateError(
-          'Local room membership does not match this device identity.');
+        'Local room membership does not match this device identity.',
+      );
     }
   }
 
