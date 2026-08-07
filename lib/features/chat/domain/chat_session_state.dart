@@ -177,8 +177,7 @@ class ChatSessionState {
       verificationRequests: verificationRequests ?? this.verificationRequests,
       trustedIdentities: trustedIdentities ?? this.trustedIdentities,
       roomMembers: roomMembers ?? this.roomMembers,
-      hasCurrentMembership:
-          hasCurrentMembership ?? this.hasCurrentMembership,
+      hasCurrentMembership: hasCurrentMembership ?? this.hasCurrentMembership,
       isRoomOwner: isRoomOwner ?? this.isRoomOwner,
       diagnostics: diagnostics ?? this.diagnostics,
     );
