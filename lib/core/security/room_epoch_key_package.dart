@@ -43,7 +43,8 @@ class RoomEpochKeyPackage {
     }
     if (memberDeviceId.trim().isEmpty || issuedByDeviceId.trim().isEmpty) {
       throw ArgumentError(
-          'Epoch package device identifiers must not be empty.');
+        'Epoch package device identifiers must not be empty.',
+      );
     }
     if (this.issuerPublicKeyBytes.length != 32 ||
         this.ephemeralPublicKeyBytes.length != 32) {
@@ -135,7 +136,8 @@ class RoomEpochKeyPackageCodec {
           issuer.publicKeyBytes,
         )) {
       throw StateError(
-          'Only the membership issuer can package this room epoch.');
+        'Only the membership issuer can package this room epoch.',
+      );
     }
 
     final ephemeral = await _keyExchange.newKeyPair();
@@ -217,7 +219,8 @@ class RoomEpochKeyPackageCodec {
     if (package.memberDeviceId != recipient.deviceId ||
         package.memberAgreementKeyId != recipient.keyId) {
       throw const FormatException(
-          'Room key package belongs to another device.');
+        'Room key package belongs to another device.',
+      );
     }
     if (!await verify(package)) {
       throw const FormatException('Room key package signature is invalid.');
@@ -263,7 +266,8 @@ class RoomEpochKeyPackageCodec {
       if (keyBytes.length != 32 ||
           await _deriveRoomKeyId(keyBytes) != package.keyId) {
         throw const FormatException(
-            'Room key package contains invalid key material.');
+          'Room key package contains invalid key material.',
+        );
       }
       return Uint8List.fromList(keyBytes);
     } on SecretBoxAuthenticationError {
