@@ -34,7 +34,8 @@ class SecureRoomCodeCodec {
     return switch (parts[0]) {
       _legacyPrefix => _decodeLegacy(parts),
       _epochPrefix => _decodeEpoch(parts),
-      _ => throw const FormatException('Secure room code has an invalid format.'),
+      _ =>
+        throw const FormatException('Secure room code has an invalid format.'),
     };
   }
 
@@ -58,7 +59,8 @@ class SecureRoomCodeCodec {
     }
     final epoch = int.tryParse(parts[2]);
     if (epoch == null || epoch < 2) {
-      throw const FormatException('Secure room code contains an invalid epoch.');
+      throw const FormatException(
+          'Secure room code contains an invalid epoch.');
     }
     return _decodeParts(
       roomId: parts[1],
@@ -66,8 +68,7 @@ class SecureRoomCodeCodec {
       keyText: parts[3],
       nameText: parts[4],
       suppliedChecksum: parts[5],
-      canonical:
-          '$_epochPrefix|${parts[1]}|$epoch|${parts[3]}|${parts[4]}',
+      canonical: '$_epochPrefix|${parts[1]}|$epoch|${parts[3]}|${parts[4]}',
     );
   }
 
