@@ -5,9 +5,12 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meshtalk_app/core/ble/message_envelope.dart';
 import 'package:meshtalk_app/core/profile/local_profile.dart';
+import 'package:meshtalk_app/core/security/device_agreement_identity.dart';
 import 'package:meshtalk_app/core/security/device_identity.dart';
 import 'package:meshtalk_app/core/security/identity_trust_store.dart';
 import 'package:meshtalk_app/core/security/message_protector.dart';
+import 'package:meshtalk_app/core/security/room_membership_manager.dart';
+import 'package:meshtalk_app/core/security/room_membership_store.dart';
 import 'package:meshtalk_app/core/security/secure_room.dart';
 import 'package:meshtalk_app/core/security/secure_room_code_codec.dart';
 import 'package:meshtalk_app/core/security/secure_room_store.dart';
@@ -26,6 +29,15 @@ void main() {
     () async {
       final room = await _room();
       final identity = await _identity(_profile.deviceId);
+      final agreementIdentity = await _agreementIdentity(_profile.deviceId);
+      final secureValues = _MemorySecureValueStore();
+      final roomStore = SecureRoomStore(values: secureValues);
+      final membershipManager = RoomMembershipManager(
+        roomStore: roomStore,
+        membershipStore: RoomMembershipStore(values: secureValues),
+        signingIdentity: identity,
+        agreementIdentity: agreementIdentity,
+      );
       final protector = MessageProtector();
       final radio = FakeBleRadio();
       final transport = FakeChatTransport(radio);
@@ -46,9 +58,9 @@ void main() {
         profile: _profile,
         secureRoom: room,
         deviceIdentity: identity,
-        identityTrustStore: IdentityTrustStore(
-          values: _MemorySecureValueStore(),
-        ),
+        identityTrustStore: IdentityTrustStore(values: secureValues),
+        membershipManager: membershipManager,
+        secureRoomStore: roomStore,
         messageProtector: protector,
         radio: radio,
         bleTransport: transport,
@@ -109,6 +121,18 @@ Future<DeviceIdentity> _identity(String deviceId) async {
   final extracted = await (await Ed25519().newKeyPair()).extract();
   final digest = await Sha256().hash(extracted.publicKey.bytes);
   return DeviceIdentity(
+    deviceId: deviceId,
+    keyId: base64UrlEncode(digest.bytes.take(8).toList()).replaceAll('=', ''),
+    publicKeyBytes: Uint8List.fromList(extracted.publicKey.bytes),
+    privateKeyBytes: Uint8List.fromList(extracted.bytes),
+    createdAtUtc: DateTime.utc(2026, 8, 6),
+  );
+}
+
+Future<DeviceAgreementIdentity> _agreementIdentity(String deviceId) async {
+  final extracted = await (await X25519().newKeyPair()).extract();
+  final digest = await Sha256().hash(extracted.publicKey.bytes);
+  return DeviceAgreementIdentity(
     deviceId: deviceId,
     keyId: base64UrlEncode(digest.bytes.take(8).toList()).replaceAll('=', ''),
     publicKeyBytes: Uint8List.fromList(extracted.publicKey.bytes),
