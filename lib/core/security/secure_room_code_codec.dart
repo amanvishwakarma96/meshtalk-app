@@ -118,6 +118,7 @@ class SecureRoomCodeCodec {
       keyBytes: keyBytes,
       createdAtUtc: now,
       keyActivatedAtUtc: now,
+      allowsLocalOwnerBootstrap: false,
     );
   }
 
