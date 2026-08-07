@@ -107,7 +107,8 @@ class ChatSession extends ChangeNotifier {
     RoomMembership? localMembership;
     List<RoomMemberSummary> roomMembers = const <RoomMemberSummary>[];
     try {
-      localMembership = await _membershipManager.ensureLocalMembership(_secureRoom);
+      localMembership =
+          await _membershipManager.ensureLocalMembership(_secureRoom);
       roomMembers = await _membershipManager.listCurrentMembers(_secureRoom);
     } on Object catch (error) {
       _recordProtectionError(error.toString());
@@ -286,7 +287,8 @@ class ChatSession extends ChangeNotifier {
       return;
     }
     if (!_state.hasCurrentMembership) {
-      throw StateError('This device is not authorized for the current room epoch.');
+      throw StateError(
+          'This device is not authorized for the current room epoch.');
     }
 
     final baseEnvelope = MessageEnvelope(
@@ -733,7 +735,8 @@ class ChatSession extends ChangeNotifier {
     _replaceState(_state.copyWith(trustedIdentities: identities));
   }
 
-  Future<SecureRoom?> _roomForProtectedEnvelope(MessageEnvelope envelope) async {
+  Future<SecureRoom?> _roomForProtectedEnvelope(
+      MessageEnvelope envelope) async {
     final keyId = _protectedRoomKeyId(envelope.payload);
     if (keyId == null) {
       return null;
