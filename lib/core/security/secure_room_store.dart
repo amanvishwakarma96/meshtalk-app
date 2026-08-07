@@ -90,6 +90,7 @@ class SecureRoomStore {
       keyBytes: keyBytes,
       createdAtUtc: now,
       keyActivatedAtUtc: now,
+      allowsLocalOwnerBootstrap: true,
     );
     await _writeState(
       _SecureRoomState(
@@ -124,6 +125,7 @@ class SecureRoomStore {
     required String keyId,
     required Uint8List keyBytes,
     DateTime? activatedAtUtc,
+    bool allowsLocalOwnerBootstrap = false,
   }) async {
     if (epoch < 1) {
       throw ArgumentError.value(epoch, 'epoch', 'Room epoch must be positive.');
@@ -145,6 +147,7 @@ class SecureRoomStore {
         keyBytes: keyBytes,
         createdAtUtc: activation,
         keyActivatedAtUtc: activation,
+        allowsLocalOwnerBootstrap: allowsLocalOwnerBootstrap,
       );
       await _writeState(
         _SecureRoomState(
@@ -204,6 +207,7 @@ class SecureRoomStore {
       keyId: imported.keyId,
       keyBytes: imported.keyBytes,
       activatedAtUtc: imported.keyActivatedAtUtc,
+      allowsLocalOwnerBootstrap: false,
     );
   }
 
@@ -295,6 +299,7 @@ class SecureRoomStore {
       keyBytes: Uint8List.fromList(_decodeBase64Url(key)),
       createdAtUtc: created,
       keyActivatedAtUtc: created,
+      allowsLocalOwnerBootstrap: true,
     );
   }
 
@@ -309,6 +314,7 @@ class SecureRoomStore {
     final key = raw['key'];
     final createdAtUtc = raw['createdAtUtc'];
     final keyActivatedAtUtc = raw['keyActivatedAtUtc'];
+    final allowsLocalOwnerBootstrap = raw['allowsLocalOwnerBootstrap'];
     final rawHistory = raw['historicalKeys'];
     if (id is! String ||
         name is! String ||
@@ -317,6 +323,7 @@ class SecureRoomStore {
         key is! String ||
         createdAtUtc is! String ||
         keyActivatedAtUtc is! String ||
+        allowsLocalOwnerBootstrap is! bool ||
         rawHistory is! List<dynamic>) {
       throw const FormatException('Secure room entry contains invalid fields.');
     }
@@ -332,6 +339,7 @@ class SecureRoomStore {
       keyBytes: Uint8List.fromList(_decodeBase64Url(key)),
       createdAtUtc: DateTime.parse(createdAtUtc).toUtc(),
       keyActivatedAtUtc: DateTime.parse(keyActivatedAtUtc).toUtc(),
+      allowsLocalOwnerBootstrap: allowsLocalOwnerBootstrap,
       historicalKeys: history,
     );
   }
@@ -373,6 +381,7 @@ class SecureRoomStore {
               'createdAtUtc': room.createdAtUtc.toUtc().toIso8601String(),
               'keyActivatedAtUtc':
                   room.keyActivatedAtUtc.toUtc().toIso8601String(),
+              'allowsLocalOwnerBootstrap': room.allowsLocalOwnerBootstrap,
               'historicalKeys': room.historicalKeys
                   .map(
                     (key) => <String, Object>{
