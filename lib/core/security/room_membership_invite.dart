@@ -107,6 +107,7 @@ class RoomMembershipInviteCodec {
     final member = invite.memberMembership;
     final package = invite.keyPackage;
     if (owner.role != RoomMemberRole.owner ||
+        member.role != RoomMemberRole.member ||
         owner.memberDeviceId != owner.issuedByDeviceId ||
         owner.roomId != member.roomId ||
         owner.roomId != package.roomId ||
