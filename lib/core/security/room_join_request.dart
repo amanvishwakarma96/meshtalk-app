@@ -74,7 +74,8 @@ class RoomJoinRequestCodec {
     DateTime? createdAtUtc,
   }) async {
     if (signingIdentity.deviceId != agreementIdentity.deviceId) {
-      throw ArgumentError('Signing and agreement identities must share a device ID.');
+      throw ArgumentError(
+          'Signing and agreement identities must share a device ID.');
     }
     final requestFields = <String, Object>{
       'agreementKeyId': agreementIdentity.keyId,
