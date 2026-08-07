@@ -96,7 +96,8 @@ class RoomMembershipManager {
       return existing;
     }
 
-    final current = await _membershipStore.listCurrentEpoch(room.id, room.epoch);
+    final current =
+        await _membershipStore.listCurrentEpoch(room.id, room.epoch);
     if (current.isNotEmpty) {
       throw StateError(
         'This device is not authorized for room epoch ${room.epoch}.',
@@ -221,7 +222,8 @@ class RoomMembershipManager {
   Future<SecureRoom> importInvite(String inviteCode) async {
     final invite = _inviteCodec.decode(inviteCode);
     if (!await _inviteCodec.verify(invite)) {
-      throw const FormatException('Membership invite signature chain is invalid.');
+      throw const FormatException(
+          'Membership invite signature chain is invalid.');
     }
     final membership = invite.memberMembership;
     if (membership.memberDeviceId != localDeviceId ||
@@ -234,7 +236,8 @@ class RoomMembershipManager {
           membership.memberAgreementPublicKeyBytes ?? const <int>[],
           _agreementIdentity.publicKeyBytes,
         )) {
-      throw const FormatException('Membership invite belongs to another device.');
+      throw const FormatException(
+          'Membership invite belongs to another device.');
     }
 
     final keyBytes = await _keyPackageCodec.open(
@@ -249,9 +252,8 @@ class RoomMembershipManager {
       keyBytes: keyBytes,
       activatedAtUtc: _nowUtc(),
     );
-    await _membershipStore
-      ..upsert(invite.ownerMembership)
-      ..upsert(membership);
+    await _membershipStore.upsert(invite.ownerMembership);
+    await _membershipStore.upsert(membership);
     return room;
   }
 
@@ -267,7 +269,8 @@ class RoomMembershipManager {
       throw StateError('The room owner cannot remove itself.');
     }
 
-    final current = await _membershipStore.listCurrentEpoch(room.id, room.epoch);
+    final current =
+        await _membershipStore.listCurrentEpoch(room.id, room.epoch);
     final target = current
         .where((membership) => membership.memberDeviceId == memberDeviceId)
         .firstOrNull;
@@ -299,8 +302,7 @@ class RoomMembershipManager {
           epoch: rotatedRoom.epoch,
           memberDeviceId: previous.memberDeviceId,
           memberPublicKeyBytes: previous.memberPublicKeyBytes,
-          memberAgreementPublicKeyBytes:
-              previous.memberAgreementPublicKeyBytes,
+          memberAgreementPublicKeyBytes: previous.memberAgreementPublicKeyBytes,
           role: previous.role,
           issuedAtUtc: _nowUtc(),
           issuer: _signingIdentity,
@@ -360,7 +362,8 @@ class RoomMembershipManager {
           membership.memberAgreementPublicKeyBytes ?? const <int>[],
           _agreementIdentity.publicKeyBytes,
         )) {
-      throw StateError('Local room membership does not match this device identity.');
+      throw StateError(
+          'Local room membership does not match this device identity.');
     }
   }
 
