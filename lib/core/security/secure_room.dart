@@ -75,7 +75,8 @@ class SecureRoom {
       if (!seenEpochs.add(historical.epoch) ||
           !seenKeyIds.add(historical.keyId)) {
         throw ArgumentError(
-            'Room key history contains duplicate epochs or keys.');
+          'Room key history contains duplicate epochs or keys.',
+        );
       }
     }
   }
