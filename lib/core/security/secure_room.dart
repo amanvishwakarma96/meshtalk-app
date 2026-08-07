@@ -36,6 +36,7 @@ class SecureRoom {
     required Uint8List keyBytes,
     required this.createdAtUtc,
     this.epoch = 1,
+    this.allowsLocalOwnerBootstrap = true,
     DateTime? keyActivatedAtUtc,
     List<SecureRoomEpochKey> historicalKeys = const <SecureRoomEpochKey>[],
   })  : keyBytes = Uint8List.fromList(keyBytes),
@@ -88,6 +89,7 @@ class SecureRoom {
   final Uint8List keyBytes;
   final DateTime createdAtUtc;
   final DateTime keyActivatedAtUtc;
+  final bool allowsLocalOwnerBootstrap;
   final List<SecureRoomEpochKey> historicalKeys;
 
   SecureRoomEpochKey get currentKey => SecureRoomEpochKey(
@@ -130,6 +132,7 @@ class SecureRoom {
       keyBytes: key.keyBytes,
       createdAtUtc: createdAtUtc,
       keyActivatedAtUtc: key.activatedAtUtc,
+      allowsLocalOwnerBootstrap: false,
     );
   }
 
@@ -161,6 +164,7 @@ class SecureRoom {
       keyBytes: newKeyBytes,
       createdAtUtc: createdAtUtc,
       keyActivatedAtUtc: activatedAtUtc,
+      allowsLocalOwnerBootstrap: allowsLocalOwnerBootstrap,
       historicalKeys: retained,
     );
   }
