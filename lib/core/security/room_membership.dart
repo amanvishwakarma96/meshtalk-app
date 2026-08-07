@@ -42,7 +42,8 @@ class RoomMembership {
         issuerPublicKeyBytes = Uint8List.fromList(issuerPublicKeyBytes),
         signatureBytes = Uint8List.fromList(signatureBytes) {
     if (version != 1 && version != 2) {
-      throw ArgumentError.value(version, 'version', 'Unsupported membership version.');
+      throw ArgumentError.value(
+          version, 'version', 'Unsupported membership version.');
     }
     if (!RegExp(r'^[A-Za-z0-9_-]{16,64}$').hasMatch(roomId)) {
       throw ArgumentError.value(roomId, 'roomId', 'Invalid room ID.');
@@ -60,7 +61,8 @@ class RoomMembership {
     if (version == 2) {
       if (memberAgreementKeyId == null ||
           !RegExp(r'^[A-Za-z0-9_-]{8,24}$').hasMatch(memberAgreementKeyId!)) {
-        throw ArgumentError('Version 2 membership needs a valid agreement key ID.');
+        throw ArgumentError(
+            'Version 2 membership needs a valid agreement key ID.');
       }
       if (this.memberAgreementPublicKeyBytes?.length != 32) {
         throw ArgumentError(
@@ -69,7 +71,8 @@ class RoomMembership {
       }
     } else if (memberAgreementKeyId != null ||
         this.memberAgreementPublicKeyBytes != null) {
-      throw ArgumentError('Version 1 membership cannot contain agreement keys.');
+      throw ArgumentError(
+          'Version 1 membership cannot contain agreement keys.');
     }
     if (this.signatureBytes.length != 64) {
       throw ArgumentError('Room membership signature must contain 64 bytes.');
@@ -221,7 +224,8 @@ class RoomMembershipCodec {
         memberAgreementKeyId: agreementKeyId as String?,
         memberAgreementPublicKeyBytes: agreementPublicKey == null
             ? null
-            : Uint8List.fromList(base64Url.decode(agreementPublicKey as String)),
+            : Uint8List.fromList(
+                base64Url.decode(agreementPublicKey as String)),
         role: RoomMemberRole.parse(raw['role'] as String),
         issuedAtUtc: DateTime.parse(raw['issuedAtUtc'] as String).toUtc(),
         issuedByDeviceId: raw['issuedByDeviceId'] as String,
