@@ -43,7 +43,10 @@ class RoomMembership {
         signatureBytes = Uint8List.fromList(signatureBytes) {
     if (version != 1 && version != 2) {
       throw ArgumentError.value(
-          version, 'version', 'Unsupported membership version.');
+        version,
+        'version',
+        'Unsupported membership version.',
+      );
     }
     if (!RegExp(r'^[A-Za-z0-9_-]{16,64}$').hasMatch(roomId)) {
       throw ArgumentError.value(roomId, 'roomId', 'Invalid room ID.');
@@ -62,7 +65,8 @@ class RoomMembership {
       if (memberAgreementKeyId == null ||
           !RegExp(r'^[A-Za-z0-9_-]{8,24}$').hasMatch(memberAgreementKeyId!)) {
         throw ArgumentError(
-            'Version 2 membership needs a valid agreement key ID.');
+          'Version 2 membership needs a valid agreement key ID.',
+        );
       }
       if (this.memberAgreementPublicKeyBytes?.length != 32) {
         throw ArgumentError(
@@ -72,7 +76,8 @@ class RoomMembership {
     } else if (memberAgreementKeyId != null ||
         this.memberAgreementPublicKeyBytes != null) {
       throw ArgumentError(
-          'Version 1 membership cannot contain agreement keys.');
+        'Version 1 membership cannot contain agreement keys.',
+      );
     }
     if (this.signatureBytes.length != 64) {
       throw ArgumentError('Room membership signature must contain 64 bytes.');
@@ -225,7 +230,8 @@ class RoomMembershipCodec {
         memberAgreementPublicKeyBytes: agreementPublicKey == null
             ? null
             : Uint8List.fromList(
-                base64Url.decode(agreementPublicKey as String)),
+                base64Url.decode(agreementPublicKey as String),
+              ),
         role: RoomMemberRole.parse(raw['role'] as String),
         issuedAtUtc: DateTime.parse(raw['issuedAtUtc'] as String).toUtc(),
         issuedByDeviceId: raw['issuedByDeviceId'] as String,
