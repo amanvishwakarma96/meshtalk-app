@@ -60,7 +60,8 @@ class SecureRoomCodeCodec {
     final epoch = int.tryParse(parts[2]);
     if (epoch == null || epoch < 2) {
       throw const FormatException(
-          'Secure room code contains an invalid epoch.');
+        'Secure room code contains an invalid epoch.',
+      );
     }
     return _decodeParts(
       roomId: parts[1],
