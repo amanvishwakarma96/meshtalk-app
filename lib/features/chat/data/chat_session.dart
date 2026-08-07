@@ -6,6 +6,8 @@ import 'package:meshtalk_app/core/ble/ble_mesh_radio.dart';
 import 'package:meshtalk_app/core/ble/mesh_relay_engine.dart';
 import 'package:meshtalk_app/core/ble/message_envelope.dart';
 import 'package:meshtalk_app/core/profile/local_profile.dart';
+import 'package:meshtalk_app/core/security/device_identity.dart';
+import 'package:meshtalk_app/core/security/identity_trust_store.dart';
 import 'package:meshtalk_app/core/security/message_protector.dart';
 import 'package:meshtalk_app/core/security/secure_room.dart';
 import 'package:meshtalk_app/core/storage/message_store.dart';
@@ -24,6 +26,8 @@ class ChatSession extends ChangeNotifier {
   ChatSession({
     required LocalProfile profile,
     required SecureRoom secureRoom,
+    required DeviceIdentity deviceIdentity,
+    required IdentityTrustStore identityTrustStore,
     required BleMeshRadio radio,
     required ChatTransport bleTransport,
     required TransportManager transportManager,
@@ -33,6 +37,8 @@ class ChatSession extends ChangeNotifier {
     MeshRelayEngine? relayEngine,
     Uuid? uuid,
   })  : _secureRoom = secureRoom,
+        _deviceIdentity = deviceIdentity,
+        _identityTrustStore = identityTrustStore,
         _messageProtector = messageProtector ?? MessageProtector(),
         _radio = radio,
         _bleTransport = bleTransport,
@@ -41,11 +47,17 @@ class ChatSession extends ChangeNotifier {
         _openAppSettings = openAppSettings,
         _relayEngine = relayEngine ?? MeshRelayEngine(),
         _uuid = uuid ?? Uuid(),
-        _state = ChatSessionState.initial(profile, secureRoom.summary);
+        _state = ChatSessionState.initial(
+          profile,
+          secureRoom.summary,
+          deviceIdentity.summary,
+        );
 
   static const String _legacyRoomId = 'nearby';
 
   final SecureRoom _secureRoom;
+  final DeviceIdentity _deviceIdentity;
+  final IdentityTrustStore _identityTrustStore;
   final MessageProtector _messageProtector;
   final BleMeshRadio _radio;
   final ChatTransport _bleTransport;
@@ -63,6 +75,8 @@ class ChatSession extends ChangeNotifier {
   final Map<String, List<PeerVerificationRequest>>
       _verificationRequestsByTransportId =
       <String, List<PeerVerificationRequest>>{};
+  final Map<String, MessageEnvelope> _blockedIdentityMessages =
+      <String, MessageEnvelope>{};
 
   ChatSessionState _state;
   bool _initialized = false;
@@ -79,6 +93,7 @@ class ChatSession extends ChangeNotifier {
     }
     _initialized = true;
 
+    final trustedIdentities = await _identityTrustStore.list();
     final secureHistory = await _messageStore.loadRoom(_secureRoom.id);
     final legacyHistory = _secureRoom.id == _legacyRoomId
         ? const <StoredChatMessage>[]
@@ -111,11 +126,12 @@ class ChatSession extends ChangeNotifier {
 
     final timeline = <ChatTimelineMessage>[];
     for (final stored in history) {
-      timeline.add(await _timelineFromStored(stored));
+      timeline.add(await _timelineFromStored(stored, trustedIdentities));
     }
     _replaceState(
       _state.copyWith(
         messages: List<ChatTimelineMessage>.unmodifiable(timeline),
+        trustedIdentities: trustedIdentities,
         diagnostics: TransportDiagnosticsSnapshot.initial(_radio.availability),
       ),
     );
@@ -213,6 +229,34 @@ class ChatSession extends ChangeNotifier {
     }
   }
 
+  Future<void> verifyIdentity(TrustedIdentitySummary identity) async {
+    await _identityTrustStore.markVerified(identity.deviceId, identity.keyId);
+    await _refreshTrustedIdentities();
+  }
+
+  Future<void> acceptIdentityChange(TrustedIdentitySummary identity) async {
+    final pendingKeyId = identity.pendingKeyId;
+    if (pendingKeyId == null) {
+      return;
+    }
+    await _identityTrustStore.acceptPending(identity.deviceId, pendingKeyId);
+    final blocked = _blockedIdentityMessages.remove(identity.deviceId);
+    await _refreshTrustedIdentities();
+    if (blocked != null) {
+      await _deliverSecureMessage(blocked);
+    }
+  }
+
+  Future<void> rejectIdentityChange(TrustedIdentitySummary identity) async {
+    final pendingKeyId = identity.pendingKeyId;
+    if (pendingKeyId == null) {
+      return;
+    }
+    _blockedIdentityMessages.remove(identity.deviceId);
+    await _identityTrustStore.rejectPending(identity.deviceId, pendingKeyId);
+    await _refreshTrustedIdentities();
+  }
+
   Future<void> send(String rawText) async {
     final text = rawText.trim();
     if (text.isEmpty || _closed) {
@@ -231,6 +275,7 @@ class ChatSession extends ChangeNotifier {
       envelope: baseEnvelope,
       clearText: Uint8List.fromList(utf8.encode(text)),
       room: _secureRoom,
+      identity: _deviceIdentity,
     );
     _relayEngine.markOriginated(envelope.id);
 
@@ -249,6 +294,7 @@ class ChatSession extends ChangeNotifier {
             stored: stored,
             text: text,
             protectionStatus: MessageProtectionStatus.endToEndEncrypted,
+            identityStatus: MessageIdentityStatus.local,
           ),
         ],
       ),
@@ -387,6 +433,29 @@ class ChatSession extends ChangeNotifier {
       return;
     }
 
+    final senderIdentity = unprotected.senderIdentity;
+    if (senderIdentity == null) {
+      _recordProtectionError('Signed sender identity is missing.');
+      return;
+    }
+    final trust = await _identityTrustStore.evaluate(
+      senderId: envelope.senderId,
+      keyId: senderIdentity.keyId,
+      publicKeyBytes: senderIdentity.publicKeyBytes,
+    );
+    await _refreshTrustedIdentities();
+    if (trust.decision == IdentityTrustDecision.changed) {
+      _blockedIdentityMessages[envelope.senderId] = envelope;
+      _recordProtectionError(
+        'Identity changed for ${envelope.senderId}. Message blocked until the new fingerprint is approved.',
+      );
+      return;
+    }
+
+    final identityStatus =
+        trust.decision == IdentityTrustDecision.trustedVerified
+            ? MessageIdentityStatus.verified
+            : MessageIdentityStatus.seen;
     final senderSuffix = envelope.senderId.length <= 6
         ? envelope.senderId
         : envelope.senderId.substring(0, 6);
@@ -409,6 +478,7 @@ class ChatSession extends ChangeNotifier {
             stored: stored,
             text: utf8.decode(unprotected.clearText, allowMalformed: true),
             protectionStatus: unprotected.status,
+            identityStatus: identityStatus,
           ),
         ],
       ),
@@ -443,21 +513,55 @@ class ChatSession extends ChangeNotifier {
         continue;
       }
       final envelope = stored.envelope;
-      if (_messageProtector.isProtectedPayload(envelope.payload)) {
-        if (envelope.roomId == _secureRoom.id) {
-          ready.add(stored);
-        }
+      if (envelope.roomId != _secureRoom.id &&
+          envelope.roomId != _legacyRoomId) {
         continue;
       }
 
+      late final Uint8List clearText;
+      if (_messageProtector.isSignedProtectedPayload(envelope.payload)) {
+        try {
+          final unprotected = await _messageProtector.unprotect(
+            envelope: envelope,
+            room: _secureRoom,
+          );
+          final senderIdentity = unprotected.senderIdentity;
+          if (envelope.senderId == _deviceIdentity.deviceId &&
+              senderIdentity?.keyId == _deviceIdentity.keyId) {
+            ready.add(stored);
+            continue;
+          }
+          clearText = unprotected.clearText;
+        } on MessageProtectionException catch (error) {
+          _recordProtectionError(error.message);
+          continue;
+        }
+      } else if (_messageProtector.isProtectedPayload(envelope.payload)) {
+        try {
+          final unprotected = await _messageProtector.unprotect(
+            envelope: envelope,
+            room: _secureRoom,
+            allowLegacyIdentity: true,
+          );
+          clearText = unprotected.clearText;
+        } on MessageProtectionException catch (error) {
+          _recordProtectionError(error.message);
+          continue;
+        }
+      } else {
+        clearText = envelope.payload;
+      }
+
       final baseEnvelope = envelope.copyWith(
+        senderId: _deviceIdentity.deviceId,
         roomId: _secureRoom.id,
         payload: Uint8List(0),
       );
       final encryptedEnvelope = await _messageProtector.protect(
         envelope: baseEnvelope,
-        clearText: envelope.payload,
+        clearText: clearText,
         room: _secureRoom,
+        identity: _deviceIdentity,
       );
       final migrated = StoredChatMessage(
         envelope: encryptedEnvelope,
@@ -473,17 +577,24 @@ class ChatSession extends ChangeNotifier {
 
   Future<ChatTimelineMessage> _timelineFromStored(
     StoredChatMessage stored,
+    List<TrustedIdentitySummary> trustedIdentities,
   ) async {
     try {
       final unprotected = await _messageProtector.unprotect(
         envelope: stored.envelope,
         room: _secureRoom,
         allowLegacy: true,
+        allowLegacyIdentity: true,
       );
       return _timelineMessage(
         stored: stored,
         text: utf8.decode(unprotected.clearText, allowMalformed: true),
         protectionStatus: unprotected.status,
+        identityStatus: _storedIdentityStatus(
+          stored,
+          unprotected,
+          trustedIdentities,
+        ),
       );
     } on MessageProtectionException {
       return _timelineMessage(
@@ -491,14 +602,42 @@ class ChatSession extends ChangeNotifier {
         text:
             'Encrypted message could not be authenticated with this room key.',
         protectionStatus: MessageProtectionStatus.unableToDecrypt,
+        identityStatus: MessageIdentityStatus.unavailable,
       );
     }
+  }
+
+  MessageIdentityStatus _storedIdentityStatus(
+    StoredChatMessage stored,
+    UnprotectedMessage unprotected,
+    List<TrustedIdentitySummary> trustedIdentities,
+  ) {
+    final senderIdentity = unprotected.senderIdentity;
+    if (senderIdentity == null) {
+      return MessageIdentityStatus.legacyUnsigned;
+    }
+    if (stored.direction == StoredMessageDirection.outgoing) {
+      return stored.envelope.senderId == _deviceIdentity.deviceId &&
+              senderIdentity.keyId == _deviceIdentity.keyId
+          ? MessageIdentityStatus.local
+          : MessageIdentityStatus.unavailable;
+    }
+    for (final trusted in trustedIdentities) {
+      if (trusted.deviceId == stored.envelope.senderId &&
+          trusted.keyId == senderIdentity.keyId) {
+        return trusted.trustLevel == IdentityTrustLevel.verified
+            ? MessageIdentityStatus.verified
+            : MessageIdentityStatus.seen;
+      }
+    }
+    return MessageIdentityStatus.seen;
   }
 
   ChatTimelineMessage _timelineMessage({
     required StoredChatMessage stored,
     required String text,
     required MessageProtectionStatus protectionStatus,
+    required MessageIdentityStatus identityStatus,
   }) {
     return ChatTimelineMessage(
       id: stored.envelope.id,
@@ -515,7 +654,13 @@ class ChatSession extends ChangeNotifier {
         StoredDeliveryStatus.received => ChatDeliveryStatus.received,
       },
       protectionStatus: protectionStatus,
+      identityStatus: identityStatus,
     );
+  }
+
+  Future<void> _refreshTrustedIdentities() async {
+    final identities = await _identityTrustStore.list();
+    _replaceState(_state.copyWith(trustedIdentities: identities));
   }
 
   Future<void> _refreshTransport({bool requestAuthorization = false}) async {
@@ -781,7 +926,7 @@ class ChatSession extends ChangeNotifier {
         : ' $pendingCount message${pendingCount == 1 ? '' : 's'} queued.';
     return switch (transport.kind) {
       TransportKind.bleMesh =>
-        'Searching for encrypted room peers over BLE…$suffix',
+        'Searching for authenticated room peers over BLE…$suffix',
       TransportKind.localWifi =>
         'BLE unavailable. Searching with ${_localTransportName(transport)}…$suffix',
       TransportKind.internetRelay => 'Searching for an internet relay…$suffix',

@@ -1,19 +1,21 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meshtalk_app/core/ble/ble_mesh_radio.dart';
 import 'package:meshtalk_app/core/ble/message_envelope.dart';
 import 'package:meshtalk_app/core/profile/local_profile.dart';
+import 'package:meshtalk_app/core/security/device_identity.dart';
+import 'package:meshtalk_app/core/security/identity_trust_store.dart';
 import 'package:meshtalk_app/core/security/message_protector.dart';
 import 'package:meshtalk_app/core/security/secure_room.dart';
 import 'package:meshtalk_app/core/security/secure_room_code_codec.dart';
+import 'package:meshtalk_app/core/security/secure_room_store.dart';
 import 'package:meshtalk_app/core/storage/stored_chat_message.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
 import 'package:meshtalk_app/core/transport/peer_verification.dart';
 import 'package:meshtalk_app/core/transport/transport_manager.dart';
-import 'package:meshtalk_app/core/transport/transport_runtime_diagnostics.dart';
 import 'package:meshtalk_app/features/chat/data/chat_session.dart';
 import 'package:meshtalk_app/features/chat/domain/chat_session_state.dart';
 
@@ -24,10 +26,13 @@ void main() {
   late FakeBleRadio radio;
   late FakeChatTransport transport;
   late FakeVerifiableChatTransport fallbackTransport;
-  FakeDiagnosticChatTransport? diagnosticTransport;
   late FakeMessageStore messageStore;
   late SecureRoom secureRoom;
   late MessageProtector protector;
+  late DeviceIdentity localIdentity;
+  late DeviceIdentity remoteIdentity;
+  late DeviceIdentity changedRemoteIdentity;
+  late IdentityTrustStore trustStore;
   late ChatSession session;
   var settingsOpened = false;
 
@@ -39,10 +44,15 @@ void main() {
       transportId: 'android-nearby',
       forcedAvailability: false,
     );
-    diagnosticTransport = null;
     messageStore = FakeMessageStore();
     protector = MessageProtector();
     secureRoom = await _secureRoom();
+    protectorForHelper = protector;
+    secureRoomForHelper = secureRoom;
+    localIdentity = await _identity(_profile.deviceId);
+    remoteIdentity = await _identity('remote-device');
+    changedRemoteIdentity = await _identity('remote-device');
+    trustStore = IdentityTrustStore(values: _MemorySecureValueStore());
     settingsOpened = false;
     session = _session(
       radio: radio,
@@ -51,6 +61,8 @@ void main() {
       store: messageStore,
       room: secureRoom,
       protector: protector,
+      localIdentity: localIdentity,
+      trustStore: trustStore,
       openSettings: () async {
         settingsOpened = true;
       },
@@ -59,59 +71,52 @@ void main() {
 
   tearDown(() async {
     await session.close();
-    await diagnosticTransport?.close();
     await transport.close();
     await fallbackTransport.close();
     await radio.close();
   });
 
-  test('persists ciphertext and marks it sent after peer recovery', () async {
-    await session.initialize();
-    await session.send(' hello mesh ');
+  test(
+    'persists a signed ciphertext and marks it sent after recovery',
+    () async {
+      await session.initialize();
+      await session.send(' hello mesh ');
 
-    expect(session.state.pendingCount, 1);
-    expect(
-      messageStore.messages.single.deliveryStatus,
-      StoredDeliveryStatus.queued,
-    );
-    expect(
-      protector.isProtectedPayload(
-        messageStore.messages.single.envelope.payload,
-      ),
-      isTrue,
-    );
-    expect(
-      session.state.messages.single.protectionStatus,
-      MessageProtectionStatus.endToEndEncrypted,
-    );
+      expect(session.state.pendingCount, 1);
+      expect(
+        messageStore.messages.single.deliveryStatus,
+        StoredDeliveryStatus.queued,
+      );
+      final queued = messageStore.messages.single.envelope;
+      expect(protector.isSignedProtectedPayload(queued.payload), isTrue);
+      expect(
+        session.state.messages.single.identityStatus,
+        MessageIdentityStatus.local,
+      );
 
-    transport.emitPeers(
-      const <NearbyPeer>[
+      transport.emitPeers(const <NearbyPeer>[
         NearbyPeer(id: 'peer-a', displayName: 'Peer A'),
-      ],
-    );
-    await _drainEvents();
+      ]);
+      await _drainEvents();
 
-    expect(session.state.pendingCount, 0);
-    expect(
-      session.state.messages.single.deliveryStatus,
-      ChatDeliveryStatus.sent,
-    );
-    expect(
-      messageStore.messages.single.deliveryStatus,
-      StoredDeliveryStatus.sent,
-    );
-    final decrypted = await protector.unprotect(
-      envelope: transport.sentMessages.single,
-      room: secureRoom,
-    );
-    expect(utf8.decode(decrypted.clearText), 'hello mesh');
-  });
+      expect(session.state.pendingCount, 0);
+      expect(
+        session.state.messages.single.deliveryStatus,
+        ChatDeliveryStatus.sent,
+      );
+      final decrypted = await protector.unprotect(
+        envelope: transport.sentMessages.single,
+        room: secureRoom,
+      );
+      expect(utf8.decode(decrypted.clearText), 'hello mesh');
+      expect(decrypted.senderIdentity?.keyId, localIdentity.keyId);
+    },
+  );
 
-  test('migrates legacy queued plaintext before restoring delivery', () async {
+  test('migrates queued plaintext to signed protocol v2', () async {
     final queuedEnvelope = MessageEnvelope(
       id: '550e8400-e29b-41d4-a716-446655440001',
-      senderId: 'device-local',
+      senderId: _profile.deviceId,
       roomId: 'nearby',
       timestampUtc: DateTime.utc(2026, 8, 4, 9),
       hopLimit: 4,
@@ -120,7 +125,7 @@ void main() {
     await messageStore.upsert(
       StoredChatMessage(
         envelope: queuedEnvelope,
-        senderLabel: 'Trail Phone',
+        senderLabel: _profile.displayName,
         direction: StoredMessageDirection.outgoing,
         deliveryStatus: StoredDeliveryStatus.queued,
       ),
@@ -133,329 +138,321 @@ void main() {
       session.state.messages.single.protectionStatus,
       MessageProtectionStatus.legacyUnencrypted,
     );
-    expect(session.state.pendingCount, 1);
-    expect(messageStore.messages.single.envelope.roomId, secureRoom.id);
     expect(
-      protector.isProtectedPayload(
-        messageStore.messages.single.envelope.payload,
-      ),
-      isTrue,
+      session.state.messages.single.identityStatus,
+      MessageIdentityStatus.legacyUnsigned,
     );
+    final migrated = messageStore.messages.single.envelope;
+    expect(migrated.roomId, secureRoom.id);
+    expect(protector.isSignedProtectedPayload(migrated.payload), isTrue);
 
-    transport.emitPeers(
-      const <NearbyPeer>[
-        NearbyPeer(id: 'peer-a', displayName: 'Peer A'),
-      ],
-    );
+    transport.emitPeers(const <NearbyPeer>[
+      NearbyPeer(id: 'peer-a', displayName: 'Peer A'),
+    ]);
     await _drainEvents();
 
     final sent = transport.sentMessages.single;
-    expect(sent.id, queuedEnvelope.id);
-    expect(sent.roomId, secureRoom.id);
     final decrypted = await protector.unprotect(
       envelope: sent,
       room: secureRoom,
     );
     expect(utf8.decode(decrypted.clearText), 'survive restart');
-    expect(session.state.pendingCount, 0);
+    expect(decrypted.senderIdentity?.keyId, localIdentity.keyId);
   });
 
-  test('persists and relays authenticated incoming ciphertext once', () async {
-    await session.initialize();
-    transport.emitPeers(
-      const <NearbyPeer>[
+  test(
+    'pins a first-seen signed identity and relays ciphertext once',
+    () async {
+      await session.initialize();
+      transport.emitPeers(const <NearbyPeer>[
         NearbyPeer(id: 'peer-a', displayName: 'Peer A'),
-      ],
-    );
-    await _drainEvents();
-    final incoming = await _protectedEnvelope(
-      protector: protector,
-      room: secureRoom,
-      id: '550e8400-e29b-41d4-a716-446655440000',
-      senderId: 'remote-device',
-      text: 'from peer',
-      hopLimit: 2,
-    );
+      ]);
+      await _drainEvents();
+      final incoming = await _protectedEnvelope(
+        id: '550e8400-e29b-41d4-a716-446655440010',
+        identity: remoteIdentity,
+        text: 'from peer',
+        hopLimit: 2,
+      );
 
-    transport.emitIncoming(incoming);
-    transport.emitIncoming(incoming);
-    await _drainEvents();
+      transport.emitIncoming(incoming);
+      transport.emitIncoming(incoming);
+      await _drainEvents();
 
-    expect(session.state.messages.single.text, 'from peer');
-    expect(
-      session.state.messages.single.protectionStatus,
-      MessageProtectionStatus.endToEndEncrypted,
-    );
-    expect(messageStore.messages.length, 1);
-    expect(
-      messageStore.messages.single.deliveryStatus,
-      StoredDeliveryStatus.received,
-    );
-    expect(
-      protector.isProtectedPayload(
-        messageStore.messages.single.envelope.payload,
-      ),
-      isTrue,
-    );
-    expect(transport.sentMessages.single.hopLimit, 1);
-    final relayed = await protector.unprotect(
-      envelope: transport.sentMessages.single,
-      room: secureRoom,
-    );
-    expect(utf8.decode(relayed.clearText), 'from peer');
-  });
+      expect(session.state.messages.single.text, 'from peer');
+      expect(
+        session.state.messages.single.identityStatus,
+        MessageIdentityStatus.seen,
+      );
+      expect(
+        session.state.trustedIdentities.single.keyId,
+        remoteIdentity.keyId,
+      );
+      expect(
+        session.state.trustedIdentities.single.trustLevel,
+        IdentityTrustLevel.seen,
+      );
+      expect(messageStore.messages.length, 1);
+      expect(transport.sentMessages.single.hopLimit, 1);
+    },
+  );
 
-  test('drops tampered ciphertext and records an encryption error', () async {
+  test('marks a pinned fingerprint verified for later messages', () async {
     await session.initialize();
-    final incoming = await _protectedEnvelope(
-      protector: protector,
-      room: secureRoom,
-      id: '550e8400-e29b-41d4-a716-446655440099',
-      senderId: 'remote-device',
-      text: 'do not display',
+    final first = await _protectedEnvelope(
+      id: '550e8400-e29b-41d4-a716-446655440011',
+      identity: remoteIdentity,
+      text: 'first',
       hopLimit: 1,
     );
-    final changed = Uint8List.fromList(incoming.payload);
-    changed[changed.length - 1] ^= 0x01;
-
-    transport.emitIncoming(incoming.copyWith(payload: changed));
+    transport.emitIncoming(first);
     await _drainEvents();
 
-    expect(session.state.messages, isEmpty);
-    expect(messageStore.messages, isEmpty);
+    await session.verifyIdentity(session.state.trustedIdentities.single);
+    final second = await _protectedEnvelope(
+      id: '550e8400-e29b-41d4-a716-446655440012',
+      identity: remoteIdentity,
+      text: 'verified',
+      hopLimit: 1,
+    );
+    transport.emitIncoming(second);
+    await _drainEvents();
+
+    expect(session.state.messages.last.text, 'verified');
     expect(
-      session.state.diagnostics?.lastError,
-      contains('authentication failed'),
+      session.state.messages.last.identityStatus,
+      MessageIdentityStatus.verified,
+    );
+    expect(
+      session.state.trustedIdentities.single.trustLevel,
+      IdentityTrustLevel.verified,
     );
   });
 
-  test('relays encrypted messages for another room without displaying them',
-      () async {
-    await session.initialize();
-    transport.emitPeers(
-      const <NearbyPeer>[
+  test(
+    'blocks a changed identity while still relaying its ciphertext',
+    () async {
+      await session.initialize();
+      transport.emitPeers(const <NearbyPeer>[
         NearbyPeer(id: 'peer-a', displayName: 'Peer A'),
-      ],
+      ]);
+      await _drainEvents();
+      transport.emitIncoming(
+        await _protectedEnvelope(
+          id: '550e8400-e29b-41d4-a716-446655440013',
+          identity: remoteIdentity,
+          text: 'original key',
+          hopLimit: 1,
+        ),
+      );
+      await _drainEvents();
+
+      final changed = await _protectedEnvelope(
+        id: '550e8400-e29b-41d4-a716-446655440014',
+        identity: changedRemoteIdentity,
+        text: 'new key blocked',
+        hopLimit: 2,
+      );
+      transport.emitIncoming(changed);
+      await _drainEvents();
+
+      expect(session.state.messages.length, 1);
+      expect(session.state.pendingIdentityChanges.length, 1);
+      expect(
+        session.state.pendingIdentityChanges.single.pendingKeyId,
+        changedRemoteIdentity.keyId,
+      );
+      expect(
+        session.state.diagnostics?.lastError,
+        contains('Identity changed'),
+      );
+      expect(transport.sentMessages.last.id, changed.id);
+      expect(transport.sentMessages.last.hopLimit, 1);
+    },
+  );
+
+  test(
+    'accepting a changed fingerprint releases the blocked message',
+    () async {
+      await session.initialize();
+      transport.emitIncoming(
+        await _protectedEnvelope(
+          id: '550e8400-e29b-41d4-a716-446655440015',
+          identity: remoteIdentity,
+          text: 'old key',
+          hopLimit: 1,
+        ),
+      );
+      await _drainEvents();
+      transport.emitIncoming(
+        await _protectedEnvelope(
+          id: '550e8400-e29b-41d4-a716-446655440016',
+          identity: changedRemoteIdentity,
+          text: 'approved new key',
+          hopLimit: 1,
+        ),
+      );
+      await _drainEvents();
+
+      await session.acceptIdentityChange(
+        session.state.pendingIdentityChanges.single,
+      );
+      await _drainEvents();
+
+      expect(session.state.messages.length, 2);
+      expect(session.state.messages.last.text, 'approved new key');
+      expect(
+        session.state.messages.last.identityStatus,
+        MessageIdentityStatus.seen,
+      );
+      expect(session.state.pendingIdentityChanges, isEmpty);
+      expect(
+        session.state.trustedIdentities.single.keyId,
+        changedRemoteIdentity.keyId,
+      );
+    },
+  );
+
+  test('rejecting a changed fingerprint keeps the old key pinned', () async {
+    await session.initialize();
+    transport.emitIncoming(
+      await _protectedEnvelope(
+        id: '550e8400-e29b-41d4-a716-446655440017',
+        identity: remoteIdentity,
+        text: 'old key',
+        hopLimit: 1,
+      ),
     );
     await _drainEvents();
-    final otherRoom = await _secureRoom(
-      roomId: 'anotherSecureRoom1234567',
-      keyOffset: 40,
+    transport.emitIncoming(
+      await _protectedEnvelope(
+        id: '550e8400-e29b-41d4-a716-446655440018',
+        identity: changedRemoteIdentity,
+        text: 'rejected key',
+        hopLimit: 1,
+      ),
     );
-    final incoming = await _protectedEnvelope(
-      protector: protector,
-      room: otherRoom,
-      id: '550e8400-e29b-41d4-a716-446655440088',
-      senderId: 'remote-device',
-      text: 'relay only',
-      hopLimit: 2,
-    );
-
-    transport.emitIncoming(incoming);
     await _drainEvents();
 
-    expect(session.state.messages, isEmpty);
-    expect(messageStore.messages, isEmpty);
-    expect(transport.sentMessages.single.id, incoming.id);
-    expect(transport.sentMessages.single.hopLimit, 1);
+    await session.rejectIdentityChange(
+      session.state.pendingIdentityChanges.single,
+    );
+
+    expect(session.state.messages.length, 1);
+    expect(session.state.pendingIdentityChanges, isEmpty);
+    expect(session.state.trustedIdentities.single.keyId, remoteIdentity.keyId);
   });
 
-  test('shows permission recovery when BLE remains unauthorized', () async {
+  test(
+    'drops tampered signed ciphertext and records an identity error',
+    () async {
+      await session.initialize();
+      final incoming = await _protectedEnvelope(
+        id: '550e8400-e29b-41d4-a716-446655440019',
+        identity: remoteIdentity,
+        text: 'do not display',
+        hopLimit: 1,
+      );
+      final changed = Uint8List.fromList(incoming.payload);
+      changed[changed.length - 1] ^= 0x01;
+
+      transport.emitIncoming(incoming.copyWith(payload: changed));
+      await _drainEvents();
+
+      expect(session.state.messages, isEmpty);
+      expect(messageStore.messages, isEmpty);
+      expect(
+        session.state.diagnostics?.lastError,
+        contains('signature is invalid'),
+      );
+    },
+  );
+
+  test(
+    'relays signed ciphertext for another room without trusting it',
+    () async {
+      await session.initialize();
+      transport.emitPeers(const <NearbyPeer>[
+        NearbyPeer(id: 'peer-a', displayName: 'Peer A'),
+      ]);
+      await _drainEvents();
+      final otherRoom = await _secureRoom(
+        roomId: 'anotherSecureRoom1234567',
+        keyOffset: 40,
+      );
+      final incoming = await _protectedEnvelope(
+        id: '550e8400-e29b-41d4-a716-446655440020',
+        identity: remoteIdentity,
+        text: 'relay only',
+        hopLimit: 2,
+        room: otherRoom,
+      );
+
+      transport.emitIncoming(incoming);
+      await _drainEvents();
+
+      expect(session.state.messages, isEmpty);
+      expect(session.state.trustedIdentities, isEmpty);
+      expect(transport.sentMessages.single.id, incoming.id);
+      expect(transport.sentMessages.single.hopLimit, 1);
+    },
+  );
+
+  test('retains permission recovery and Android Nearby fallback', () async {
     radio.currentAvailability = BleRadioAvailability.unauthorized;
-
     await session.initialize();
-
     expect(session.state.status, ChatConnectionStatus.permissionDenied);
     await session.openSettings();
     expect(settingsOpened, isTrue);
-  });
 
-  test('activates Android Nearby when Bluetooth is off', () async {
-    radio.currentAvailability = BleRadioAvailability.poweredOff;
-    fallbackTransport.forcedAvailability = true;
-
-    await session.initialize();
-
-    expect(session.state.status, ChatConnectionStatus.scanning);
-    expect(session.state.activeTransportKind, TransportKind.localWifi);
-    expect(session.state.statusMessage, contains('Android Nearby Connections'));
-
-    fallbackTransport.emitPeers(
-      const <NearbyPeer>[
-        NearbyPeer(id: 'peer-wifi', displayName: 'Nearby Peer'),
-      ],
-    );
-    await _drainEvents();
-
-    expect(session.state.status, ChatConnectionStatus.connected);
-    expect(session.state.activeTransportKind, TransportKind.localWifi);
-    expect(session.state.statusMessage, contains('verified Android Nearby'));
-  });
-
-  test('labels iOS Multipeer and records native runtime errors', () async {
     await session.close();
     radio.currentAvailability = BleRadioAvailability.poweredOff;
-    diagnosticTransport = FakeDiagnosticChatTransport(
-      radio,
-      transportId: 'ios-multipeer',
-      forcedAvailability: true,
-    );
-    final iosFallback = diagnosticTransport!;
-    session = ChatSession(
-      profile: _profile,
-      secureRoom: secureRoom,
-      messageProtector: protector,
+    fallbackTransport.forcedAvailability = true;
+    session = _session(
       radio: radio,
-      bleTransport: transport,
-      transportManager: TransportManager(
-        transports: <ChatTransport>[transport, iosFallback],
-      ),
-      messageStore: messageStore,
-      openAppSettings: () async {},
-    );
-
-    await session.initialize();
-
-    expect(session.state.activeTransportKind, TransportKind.localWifi);
-    expect(session.state.statusMessage, contains('iOS Multipeer Connectivity'));
-
-    iosFallback.emitRuntimeError('iOS local-network discovery stopped.');
-    await _drainEvents();
-
-    expect(
-      session.state.diagnostics?.lastError,
-      'iOS local-network discovery stopped.',
-    );
-    expect(
-      session.state.statusMessage,
-      'iOS local-network discovery stopped.',
-    );
-  });
-
-  test('routes matching-code approval to the active verification transport',
-      () async {
-    radio.currentAvailability = BleRadioAvailability.poweredOff;
-    fallbackTransport.forcedAvailability = true;
-    await session.initialize();
-    const request = PeerVerificationRequest(
-      transportId: 'android-nearby',
-      endpointId: 'endpoint-a',
-      peerId: 'peer-a',
-      displayName: 'Peer A',
-      authenticationToken: '4721',
-      isIncomingConnection: true,
-    );
-
-    fallbackTransport.emitVerification(request);
-    await _drainEvents();
-
-    expect(
-      session.state.verificationRequests,
-      <PeerVerificationRequest>[request],
-    );
-    expect(
-      session.state.statusMessage,
-      contains('waiting for code verification'),
-    );
-
-    await session.approvePeer(request);
-    await _drainEvents();
-
-    expect(fallbackTransport.approvedEndpointIds, <String>['endpoint-a']);
-    expect(session.state.verificationRequests, isEmpty);
-  });
-
-  test('routes rejection and removes the verification request', () async {
-    radio.currentAvailability = BleRadioAvailability.poweredOff;
-    fallbackTransport.forcedAvailability = true;
-    await session.initialize();
-    const request = PeerVerificationRequest(
-      transportId: 'android-nearby',
-      endpointId: 'endpoint-b',
-      peerId: 'peer-b',
-      displayName: 'Peer B',
-      authenticationToken: '8391',
-      isIncomingConnection: false,
-    );
-
-    fallbackTransport.emitVerification(request);
-    await _drainEvents();
-    await session.rejectPeer(request);
-    await _drainEvents();
-
-    expect(fallbackTransport.rejectedEndpointIds, <String>['endpoint-b']);
-    expect(session.state.verificationRequests, isEmpty);
-  });
-
-  test('records active transport and encrypted room diagnostics', () async {
-    await session.initialize();
-
-    final diagnostics = session.state.diagnostics;
-    expect(diagnostics, isNotNull);
-    expect(diagnostics!.activeTransportId, transport.id);
-    expect(diagnostics.activeTransportKind, TransportKind.bleMesh);
-    expect(diagnostics.bluetoothAvailability, BleRadioAvailability.ready);
-    expect(diagnostics.activeTransportMaxPayloadBytes, 64);
-    expect(diagnostics.lastError, isNull);
-    expect(session.state.secureRoom.id, secureRoom.id);
-    expect(session.state.secureRoom.keyId, secureRoom.keyId);
-  });
-
-  test('refreshes transport availability when the app resumes', () async {
-    await session.initialize();
-    final checksBeforeResume = transport.availabilityChecks;
-
-    await session.onAppResumed();
-
-    expect(transport.availabilityChecks, greaterThan(checksBeforeResume));
-  });
-
-  test('flushes encrypted queue through Android Nearby fallback', () async {
-    radio.currentAvailability = BleRadioAvailability.poweredOff;
-    fallbackTransport.forcedAvailability = true;
-    await session.initialize();
-    await session.send('fallback delivery');
-
-    expect(session.state.pendingCount, 1);
-
-    fallbackTransport.emitPeers(
-      const <NearbyPeer>[
-        NearbyPeer(id: 'peer-wifi', displayName: 'Nearby Peer'),
-      ],
-    );
-    await _drainEvents();
-
-    final decrypted = await protector.unprotect(
-      envelope: fallbackTransport.sentMessages.single,
+      transport: transport,
+      fallback: fallbackTransport,
+      store: messageStore,
       room: secureRoom,
+      protector: protector,
+      localIdentity: localIdentity,
+      trustStore: trustStore,
+      openSettings: () async {},
     );
-    expect(utf8.decode(decrypted.clearText), 'fallback delivery');
-    expect(session.state.pendingCount, 0);
-    expect(
-      messageStore.messages.single.deliveryStatus,
-      StoredDeliveryStatus.sent,
-    );
-  });
-
-  test('upgrades from Android Nearby to BLE when Bluetooth recovers', () async {
-    radio.currentAvailability = BleRadioAvailability.poweredOff;
-    fallbackTransport.forcedAvailability = true;
     await session.initialize();
-    fallbackTransport.emitPeers(
-      const <NearbyPeer>[
-        NearbyPeer(id: 'peer-wifi', displayName: 'Nearby Peer'),
-      ],
-    );
-    await _drainEvents();
+
     expect(session.state.activeTransportKind, TransportKind.localWifi);
-
-    radio.emitAvailability(BleRadioAvailability.ready);
-    await _drainEvents();
-
-    expect(session.state.activeTransportKind, TransportKind.bleMesh);
-    expect(session.state.status, ChatConnectionStatus.scanning);
-    expect(fallbackTransport.connected, isFalse);
+    expect(
+      session.state.statusMessage,
+      contains('Android Nearby Connections'),
+    );
   });
+
+  test(
+    'routes matching-code approval and reports identity diagnostics',
+    () async {
+      radio.currentAvailability = BleRadioAvailability.poweredOff;
+      fallbackTransport.forcedAvailability = true;
+      await session.initialize();
+      const request = PeerVerificationRequest(
+        transportId: 'android-nearby',
+        endpointId: 'endpoint-a',
+        peerId: 'peer-a',
+        displayName: 'Peer A',
+        authenticationToken: '4721',
+        isIncomingConnection: true,
+      );
+      fallbackTransport.emitVerification(request);
+      await _drainEvents();
+
+      await session.approvePeer(request);
+      await _drainEvents();
+
+      expect(fallbackTransport.approvedEndpointIds, <String>['endpoint-a']);
+      expect(session.state.localIdentity.keyId, localIdentity.keyId);
+      expect(session.state.diagnostics?.activeTransportId, 'android-nearby');
+    },
+  );
 }
 
 const LocalProfile _profile = LocalProfile(
@@ -470,11 +467,15 @@ ChatSession _session({
   required FakeMessageStore store,
   required SecureRoom room,
   required MessageProtector protector,
+  required DeviceIdentity localIdentity,
+  required IdentityTrustStore trustStore,
   required Future<void> Function() openSettings,
 }) {
   return ChatSession(
     profile: _profile,
     secureRoom: room,
+    deviceIdentity: localIdentity,
+    identityTrustStore: trustStore,
     messageProtector: protector,
     radio: radio,
     bleTransport: transport,
@@ -503,27 +504,43 @@ Future<SecureRoom> _secureRoom({
   );
 }
 
+Future<DeviceIdentity> _identity(String deviceId) async {
+  final extracted = await (await Ed25519().newKeyPair()).extract();
+  final digest = await Sha256().hash(extracted.publicKey.bytes);
+  return DeviceIdentity(
+    deviceId: deviceId,
+    keyId: base64UrlEncode(digest.bytes.take(8).toList()).replaceAll('=', ''),
+    publicKeyBytes: Uint8List.fromList(extracted.publicKey.bytes),
+    privateKeyBytes: Uint8List.fromList(extracted.bytes),
+    createdAtUtc: DateTime.utc(2026, 8, 6),
+  );
+}
+
 Future<MessageEnvelope> _protectedEnvelope({
-  required MessageProtector protector,
-  required SecureRoom room,
   required String id,
-  required String senderId,
+  required DeviceIdentity identity,
   required String text,
   required int hopLimit,
+  SecureRoom? room,
 }) {
-  return protector.protect(
+  final targetRoom = room ?? secureRoomForHelper;
+  return protectorForHelper.protect(
     envelope: MessageEnvelope(
       id: id,
-      senderId: senderId,
-      roomId: room.id,
+      senderId: identity.deviceId,
+      roomId: targetRoom.id,
       timestampUtc: DateTime.utc(2026, 8, 5, 12),
       hopLimit: hopLimit,
       payload: Uint8List(0),
     ),
     clearText: Uint8List.fromList(utf8.encode(text)),
-    room: room,
+    room: targetRoom,
+    identity: identity,
   );
 }
+
+late SecureRoom secureRoomForHelper;
+late MessageProtector protectorForHelper;
 
 Future<void> _drainEvents() async {
   await Future<void>.delayed(Duration.zero);
@@ -531,30 +548,14 @@ Future<void> _drainEvents() async {
   await Future<void>.delayed(Duration.zero);
 }
 
-class FakeDiagnosticChatTransport extends FakeChatTransport
-    implements TransportRuntimeDiagnostics {
-  FakeDiagnosticChatTransport(
-    super.radio, {
-    required super.transportId,
-    super.forcedAvailability,
-  }) : super(transportKind: TransportKind.localWifi);
-
-  final StreamController<TransportRuntimeError> _runtimeErrorController =
-      StreamController<TransportRuntimeError>.broadcast();
+class _MemorySecureValueStore implements SecureValueStore {
+  final Map<String, String> _values = <String, String>{};
 
   @override
-  Stream<TransportRuntimeError> get runtimeErrors =>
-      _runtimeErrorController.stream;
-
-  void emitRuntimeError(String message) {
-    _runtimeErrorController.add(
-      TransportRuntimeError(transportId: id, message: message),
-    );
-  }
+  Future<String?> read(String key) async => _values[key];
 
   @override
-  Future<void> close() async {
-    await super.close();
-    await _runtimeErrorController.close();
+  Future<void> write(String key, String value) async {
+    _values[key] = value;
   }
 }

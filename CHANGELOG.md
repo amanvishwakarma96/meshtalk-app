@@ -41,13 +41,20 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Per-message encrypted, legacy-unencrypted, and unable-to-authenticate indicators.
 - Encryption details and room fingerprints in local diagnostics.
 - Cryptography, secure-room codec, secure-storage, migration, tamper-rejection, ciphertext-relay, session, and widget regression tests.
+- Persistent Ed25519 signing identities generated separately for every stable MeshTalk device ID.
+- Signed encrypted payload protocol version 2 with the sender public key, short identity fingerprint, and Ed25519 signature.
+- Trust-on-first-use identity pinning that associates one signing key with each observed sender device ID.
+- Device-identity dialog for comparing local and peer fingerprints and marking a first-seen key verified.
+- Identity-change warning and explicit actions to keep the old key or approve the replacement key.
+- Per-message labels for local signatures, first-seen identities, verified identities, and unsigned legacy history.
+- Device-signing, identity-trust, impersonation, signature-tamper, key-change, queue-upgrade, relay, and verification-UI tests.
 
 ### Changed
 
 - Replaced the central-only `flutter_blue_plus` dependency with MIT-licensed `bluetooth_low_energy`, which supports both BLE central and peripheral roles.
 - Android project configuration now enforces API 24 and declares BLE, Wi-Fi state, Nearby Wi-Fi, legacy location, and local-network permissions without storage access.
 - Android application backup is disabled so secure-storage ciphertext is not restored without its device-bound key material.
-- iOS project configuration now creates a repeatable Keychain entitlement for encrypted-room key storage.
+- iOS project configuration now creates a repeatable Keychain entitlement for encrypted-room and signing-key storage.
 - The app now launches the live session-backed chat page instead of the static chat shell.
 - `TransportManager` now emits successful-send events used to update durable delivery state.
 - `TransportManager` now continues to lower-priority transports when a higher-priority transport fails to activate and preserves a working fallback when an upgrade fails.
@@ -58,7 +65,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Intermediate peers can relay ciphertext for rooms they have not joined while retaining normal TTL and message-ID deduplication.
 - Pending legacy plaintext messages are migrated to authenticated ciphertext before they enter the transport queue.
 - Existing plaintext history remains readable locally but is explicitly labelled as legacy unencrypted history.
-- Android Nearby peers are now shown as connected only after the user confirms that the authentication codes match on both phones.
+- New outbound messages are now signed after encryption, and signed sender identity is verified before a received message is displayed or persisted.
+- Pending protocol-version-1 ciphertext is decrypted locally and re-encrypted/re-signed as protocol version 2 before queue restoration.
+- Protocol-version-1 encrypted history remains locally readable but is labelled as an unsigned legacy sender; unsigned encrypted network payloads are rejected.
+- A replacement signing key for a pinned device ID is staged and blocked rather than silently trusted.
+- Approving a replacement identity resets it to first-seen until its new fingerprint is compared and verified.
+- Android Nearby peers are shown as connected only after the user confirms that the authentication codes match on both phones.
 
 ### Fixed
 
@@ -69,3 +81,6 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Duplicate or stale Nearby connection callbacks no longer bypass the pending verification state.
 - Tampered ciphertext, immutable-metadata changes, wrong room keys, and unauthenticated network plaintext are rejected before entering visible history.
 - Corrupt secure-room storage fails initialization instead of silently generating replacement key material.
+- Sender-ID changes, public-key substitutions, identity-key fingerprint mismatches, signature changes, and ciphertext changes are rejected by signed protocol version 2.
+- A room-key holder can no longer silently impersonate an already-pinned device ID without that device's Ed25519 private key.
+- Long message-security labels wrap responsively instead of overflowing narrow message cards.

@@ -1,4 +1,6 @@
 import 'package:meshtalk_app/core/profile/local_profile.dart';
+import 'package:meshtalk_app/core/security/device_identity.dart';
+import 'package:meshtalk_app/core/security/identity_trust_store.dart';
 import 'package:meshtalk_app/core/security/message_protector.dart';
 import 'package:meshtalk_app/core/security/secure_room.dart';
 import 'package:meshtalk_app/core/transport/chat_transport.dart';
@@ -27,6 +29,14 @@ enum ChatDeliveryStatus {
   received,
 }
 
+enum MessageIdentityStatus {
+  local,
+  seen,
+  verified,
+  legacyUnsigned,
+  unavailable,
+}
+
 class ChatTimelineMessage {
   const ChatTimelineMessage({
     required this.id,
@@ -36,6 +46,7 @@ class ChatTimelineMessage {
     required this.direction,
     required this.deliveryStatus,
     required this.protectionStatus,
+    required this.identityStatus,
   });
 
   final String id;
@@ -45,6 +56,7 @@ class ChatTimelineMessage {
   final ChatMessageDirection direction;
   final ChatDeliveryStatus deliveryStatus;
   final MessageProtectionStatus protectionStatus;
+  final MessageIdentityStatus identityStatus;
 
   ChatTimelineMessage copyWith({ChatDeliveryStatus? deliveryStatus}) {
     return ChatTimelineMessage(
@@ -57,6 +69,7 @@ class ChatTimelineMessage {
           ? this.deliveryStatus
           : deliveryStatus ?? this.deliveryStatus,
       protectionStatus: protectionStatus,
+      identityStatus: identityStatus,
     );
   }
 }
@@ -65,6 +78,7 @@ class ChatSessionState {
   const ChatSessionState({
     required this.profile,
     required this.secureRoom,
+    required this.localIdentity,
     required this.status,
     required this.statusMessage,
     required this.messages,
@@ -72,18 +86,21 @@ class ChatSessionState {
     required this.pendingCount,
     this.activeTransportKind,
     this.verificationRequests = const <PeerVerificationRequest>[],
+    this.trustedIdentities = const <TrustedIdentitySummary>[],
     this.diagnostics,
   });
 
   factory ChatSessionState.initial(
     LocalProfile profile,
     SecureRoomSummary secureRoom,
+    DeviceIdentitySummary localIdentity,
   ) {
     return ChatSessionState(
       profile: profile,
       secureRoom: secureRoom,
+      localIdentity: localIdentity,
       status: ChatConnectionStatus.initializing,
-      statusMessage: 'Preparing encrypted nearby chat…',
+      statusMessage: 'Preparing authenticated encrypted nearby chat…',
       messages: const <ChatTimelineMessage>[],
       peers: const <NearbyPeer>[],
       pendingCount: 0,
@@ -92,6 +109,7 @@ class ChatSessionState {
 
   final LocalProfile profile;
   final SecureRoomSummary secureRoom;
+  final DeviceIdentitySummary localIdentity;
   final ChatConnectionStatus status;
   final String statusMessage;
   final List<ChatTimelineMessage> messages;
@@ -99,7 +117,12 @@ class ChatSessionState {
   final int pendingCount;
   final TransportKind? activeTransportKind;
   final List<PeerVerificationRequest> verificationRequests;
+  final List<TrustedIdentitySummary> trustedIdentities;
   final TransportDiagnosticsSnapshot? diagnostics;
+
+  List<TrustedIdentitySummary> get pendingIdentityChanges => trustedIdentities
+      .where((identity) => identity.hasPendingChange)
+      .toList(growable: false);
 
   bool get canSend =>
       status == ChatConnectionStatus.scanning ||
@@ -116,6 +139,7 @@ class ChatSessionState {
   ChatSessionState copyWith({
     LocalProfile? profile,
     SecureRoomSummary? secureRoom,
+    DeviceIdentitySummary? localIdentity,
     ChatConnectionStatus? status,
     String? statusMessage,
     List<ChatTimelineMessage>? messages,
@@ -123,12 +147,14 @@ class ChatSessionState {
     int? pendingCount,
     TransportKind? activeTransportKind,
     List<PeerVerificationRequest>? verificationRequests,
+    List<TrustedIdentitySummary>? trustedIdentities,
     TransportDiagnosticsSnapshot? diagnostics,
     bool clearActiveTransport = false,
   }) {
     return ChatSessionState(
       profile: profile ?? this.profile,
       secureRoom: secureRoom ?? this.secureRoom,
+      localIdentity: localIdentity ?? this.localIdentity,
       status: status ?? this.status,
       statusMessage: statusMessage ?? this.statusMessage,
       messages: messages ?? this.messages,
@@ -138,6 +164,7 @@ class ChatSessionState {
           ? null
           : activeTransportKind ?? this.activeTransportKind,
       verificationRequests: verificationRequests ?? this.verificationRequests,
+      trustedIdentities: trustedIdentities ?? this.trustedIdentities,
       diagnostics: diagnostics ?? this.diagnostics,
     );
   }

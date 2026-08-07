@@ -55,7 +55,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                 const Icon(Icons.error_outline, size: 48),
                 const SizedBox(height: 12),
                 const Text(
-                  'MeshTalk could not initialize the encrypted nearby chat session.',
+                  'MeshTalk could not initialize authenticated encrypted nearby chat.',
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 12),
@@ -79,6 +79,9 @@ class _ChatPageState extends ConsumerState<ChatPage>
             onOpenSettings: session.openSettings,
             onApprovePeer: session.approvePeer,
             onRejectPeer: session.rejectPeer,
+            onVerifyIdentity: session.verifyIdentity,
+            onAcceptIdentityChange: session.acceptIdentityChange,
+            onRejectIdentityChange: session.rejectIdentityChange,
             onExportRoomCode: () {
               return ref.read(secureRoomStoreProvider).exportActiveRoomCode();
             },
