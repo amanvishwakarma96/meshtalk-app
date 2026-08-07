@@ -103,6 +103,11 @@ class RoomMembershipManager {
         'This device is not authorized for room epoch ${room.epoch}.',
       );
     }
+    if (!room.allowsLocalOwnerBootstrap) {
+      throw StateError(
+        'This room key does not grant membership. Import an owner-signed membership invite.',
+      );
+    }
 
     final owner = await _membershipCodec.issue(
       roomId: room.id,
@@ -253,6 +258,7 @@ class RoomMembershipManager {
       keyId: invite.keyPackage.keyId,
       keyBytes: keyBytes,
       activatedAtUtc: _nowUtc(),
+      allowsLocalOwnerBootstrap: false,
     );
     await _membershipStore.upsert(invite.ownerMembership);
     await _membershipStore.upsert(membership);
