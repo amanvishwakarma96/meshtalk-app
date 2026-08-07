@@ -42,7 +42,8 @@ class RoomEpochKeyPackage {
       throw ArgumentError('Epoch package contains an invalid key identifier.');
     }
     if (memberDeviceId.trim().isEmpty || issuedByDeviceId.trim().isEmpty) {
-      throw ArgumentError('Epoch package device identifiers must not be empty.');
+      throw ArgumentError(
+          'Epoch package device identifiers must not be empty.');
     }
     if (this.issuerPublicKeyBytes.length != 32 ||
         this.ephemeralPublicKeyBytes.length != 32) {
@@ -133,7 +134,8 @@ class RoomEpochKeyPackageCodec {
           membership.issuerPublicKeyBytes,
           issuer.publicKeyBytes,
         )) {
-      throw StateError('Only the membership issuer can package this room epoch.');
+      throw StateError(
+          'Only the membership issuer can package this room epoch.');
     }
 
     final ephemeral = await _keyExchange.newKeyPair();
@@ -214,7 +216,8 @@ class RoomEpochKeyPackageCodec {
   }) async {
     if (package.memberDeviceId != recipient.deviceId ||
         package.memberAgreementKeyId != recipient.keyId) {
-      throw const FormatException('Room key package belongs to another device.');
+      throw const FormatException(
+          'Room key package belongs to another device.');
     }
     if (!await verify(package)) {
       throw const FormatException('Room key package signature is invalid.');
@@ -259,7 +262,8 @@ class RoomEpochKeyPackageCodec {
       );
       if (keyBytes.length != 32 ||
           await _deriveRoomKeyId(keyBytes) != package.keyId) {
-        throw const FormatException('Room key package contains invalid key material.');
+        throw const FormatException(
+            'Room key package contains invalid key material.');
       }
       return Uint8List.fromList(keyBytes);
     } on SecretBoxAuthenticationError {
@@ -311,7 +315,8 @@ class RoomEpochKeyPackageCodec {
         ephemeralPublicKeyBytes: Uint8List.fromList(
           base64Url.decode(raw['ephemeralPublicKey'] as String),
         ),
-        nonceBytes: Uint8List.fromList(base64Url.decode(raw['nonce'] as String)),
+        nonceBytes:
+            Uint8List.fromList(base64Url.decode(raw['nonce'] as String)),
         macBytes: Uint8List.fromList(base64Url.decode(raw['mac'] as String)),
         cipherTextBytes: Uint8List.fromList(
           base64Url.decode(raw['cipherText'] as String),
