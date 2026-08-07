@@ -156,9 +156,8 @@ class SecureRoomStore {
     }
 
     if (epoch < existing.epoch) {
-      final historical = existing.keyRing
-          .where((key) => key.epoch == epoch)
-          .firstOrNull;
+      final historical =
+          existing.keyRing.where((key) => key.epoch == epoch).firstOrNull;
       if (historical == null ||
           historical.keyId != keyId ||
           !_constantTimeEquals(historical.keyBytes, keyBytes)) {
